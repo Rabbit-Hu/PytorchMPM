@@ -4,19 +4,26 @@ import torch
 import os
 import sys
 
-###### Ahead of Time ######
-# import lltm_cpp_aot as lltm_cpp
 
-###### Just in Time ######
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lltm_cpp'))
-print(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lltm_cpp'))
-from backend import lltm_cpp_jit as lltm_cpp
+###### Ahead of Time (CPP) ######
+# import lltm_cpp_aot as lltm
+
+###### Just in Time (CPP) ######
+# sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lltm_cpp'))
+# from backend import lltm_cpp_jit as lltm
+
+###### Ahead of Time (CUDA) ######
+# import lltm_cuda_aot as lltm
+
+###### Just in Time (CUDA) ######
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lltm_cuda'))
+from backend import lltm_cuda_jit as lltm
 
 
 class LLTMFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, weights, bias, old_h, old_cell):
-        outputs = lltm_cpp.forward(input, weights, bias, old_h, old_cell)
+        outputs = lltm.forward(input, weights, bias, old_h, old_cell)
         new_h, new_cell = outputs[:2]
         variables = outputs[1:] + [weights]
         ctx.save_for_backward(*variables)
@@ -25,9 +32,9 @@ class LLTMFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_h, grad_cell):
-        outputs = lltm_cpp.backward(
+        outputs = lltm.backward(
             grad_h.contiguous(), grad_cell.contiguous(), *ctx.saved_tensors)
-        d_old_h, d_input, d_weights, d_bias, d_old_cell = outputs
+        d_old_h, d_input, d_weights, d_bias, d_old_cell = outputs[:5]
         return d_input, d_weights, d_bias, d_old_h, d_old_cell
 
 

@@ -19,7 +19,7 @@ rnn = LLTM(input_features, state_size).to(device=device)
 
 forward = 0
 backward = 0
-for _ in tqdm(range(100)):
+for _ in tqdm(range(1000)):
     start = time.time()
     new_h, new_C = rnn(X, (h, C))
     forward += time.time() - start
