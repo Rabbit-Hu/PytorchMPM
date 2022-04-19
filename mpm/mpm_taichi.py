@@ -59,7 +59,6 @@ def substep():
             weight = w[i][0] * w[j][1]
             grid_v[base + offset] += weight * (p_mass * v[p] + affine @ dpos)
             grid_m[base + offset] += weight * p_mass
-    return
     for i, j in grid_m:
         if grid_m[i, j] > 0: # No need for epsilon here
             grid_v[i, j] = (1 / grid_m[i, j]) * grid_v[i, j] # Momentum to velocity
