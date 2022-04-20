@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.cpu)
 
 
 class MPMModel(nn.Module):
