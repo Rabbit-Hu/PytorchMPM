@@ -27,7 +27,7 @@ mpm_point2voxel_kernel(
     int *__restrict__ batch_index,
     int direction, //0 p2g 1 g2p
     int c,
-    int dim)
+    int dim) // b (num of points)
 {
     int p = get_tid();
     if (p < dim) // handle one particle
