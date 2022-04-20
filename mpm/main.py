@@ -13,12 +13,16 @@ ti.init(arch=ti.gpu)
 
 
 class MPMModel(nn.Module):
-    def __init__(self, n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0):
+    def __init__(self, n_dim, n_particles, n_grid, dx, dt, \
+                 p_vol, p_rho, E, nu, mu_0, lambda_0,      \
+                 use_cuda_functions=True):
         super(MPMModel, self).__init__()
         ############ Hyper-Parameters ############
         self.n_dim, self.n_particles, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.E, self.nu, self.mu_0, self.lambda_0 = n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
+        
+        self.use_cuda_functions = use_cuda_functions
 
     def forward(self, x, v, C, F, material, Jp):
         grid_v = torch.zeros((self.n_grid, self.n_grid, self.n_dim), dtype=torch.float, device=x.device) # grid node momentum / velocity
