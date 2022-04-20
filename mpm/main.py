@@ -9,6 +9,7 @@ import torch.nn.functional as F
 # from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
+ti.init(arch=ti.gpu)
 
 
 class MPMModel(nn.Module):
@@ -38,7 +39,7 @@ class MPMModel(nn.Module):
         mu[material == 0] = 0.0 # liquid
 
         # compute determinant J
-        U, sig, Vh = torch.svd(F) # [N, D, D], [N, D], [N, D, D]
+        U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
         snow_sig = sig[material == 2]
         clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
         Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
@@ -52,18 +53,27 @@ class MPMModel(nn.Module):
         stress = 2 * mu[:, None, None] * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device)[None, :, :] * (lamda * J * (J - 1))[:, None, None]
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
-        
+
         # TODO: use the P2G extension
         if self.n_dim == 2:
             for i in range(3):
                 for j in range(3):
                     offset = torch.tensor([i, j], dtype=torch.long, device=x.device) # [2,]
-                    dpos = (offset.float() - fx) * self.dx # [N, D]
+                    dpos = (offset.float()[None, :] - fx) * self.dx # [N, D]
                     weight = w[i][:, 0] * w[j][:, 1] # [N]
                     target = base + offset
-                    assert(target.min() >= 0 and target.max() < self.n_grid)
-                    grid_v[target[:, 0], target[:, 1], :] += weight[:, None] * (self.p_mass * v + torch.bmm(affine, dpos[:, :, None]).squeeze(-1)) # [N, D] * ([N, D] + [N, D]) = [N, D] # ! this grid_v is momentum
-                    grid_m[target[:, 0], target[:, 1]] += weight * self.p_mass # [N,]
+
+                    # ! use atomic add function torch.Tensor.index_add_
+                    # grid_v stores momentum (will be divided by m later)
+                    grid_v_add = weight[:, None] * (self.p_mass * v + torch.bmm(affine, dpos[:, :, None]).squeeze(-1))
+                    grid_v = grid_v.view(self.n_grid**2, self.n_dim) # [G**2, D]
+                    grid_v.index_add_(0, target[:, 0] * self.n_grid + target[:, 1], grid_v_add)
+                    grid_v = grid_v.view(self.n_grid, self.n_grid, self.n_dim)
+
+                    grid_m_add = weight * self.p_mass
+                    grid_m = grid_m.view(self.n_grid**2)
+                    grid_m.index_add_(0, target[:, 0] * self.n_grid + target[:, 1], grid_m_add)
+                    grid_m = grid_m.view(self.n_grid, self.n_grid)
         else:
             raise NotImplementedError
 
@@ -72,14 +82,12 @@ class MPMModel(nn.Module):
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask][:, None] # momentum to velocity
         grid_v[:, :, 1][non_empty_mask] -= self.dt * 50 # gravity
-        
+
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
         torch.clamp_(grid_v[-3:, :, 0], max=0)
         torch.clamp_(grid_v[:, :3, 1], min=0)
         torch.clamp_(grid_v[:, -3:, 1], max=0)
-
-        print(grid_v[:, :].min(dim=0).values.min(dim=0).values)
 
         ############ grid to particle (G2P) ############
 
@@ -91,20 +99,18 @@ class MPMModel(nn.Module):
             for i in range(3):
                 for j in range(3):
                     offset = torch.tensor([i, j], dtype=torch.long, device=x.device) # [2,]
-                    dpos = (offset.float() - fx) * self.dx # [N, D]
+                    dpos = offset.float() - fx # [N, D]
                     weight = w[i][:, 0] * w[j][:, 1] # [N]
                     target = base + offset
                     g_v = grid_v[target[:, 0], target[:, 1], :] # [N, D]
                     new_v += weight[:, None] * g_v
-                    new_C += 4 * self.inv_dx * weight[:, None, None] * g_v[:, :, None] * dpos[:, None, :]
+                    new_C += 4 * self.inv_dx * weight[:, None, None] * (g_v[:, :, None] * dpos[:, None, :])
         else:
             raise NotImplementedError
 
         v = new_v
         C = new_C
         x += self.dt * v
-
-        print(x)
 
         return x, v, C, F, material, Jp
 
@@ -153,7 +159,7 @@ def main():
 
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
     while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
-        for s in range(int(2e-4 // dt)):
+        for s in range(int(2e-3 // dt)):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
         gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
