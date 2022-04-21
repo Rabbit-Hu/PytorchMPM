@@ -11,6 +11,8 @@ from functional import avg_voxelize, mpm_p2g, mpm_g2p
 import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
 ti.init(arch=ti.cpu)
 
+np.random.seed(998244353)
+
 
 class MPMModel(nn.Module):
     def __init__(self, n_dim, n_particles, n_grid, dx, dt, \
@@ -29,7 +31,6 @@ class MPMModel(nn.Module):
         grid_m = torch.zeros((self.n_grid, self.n_grid), dtype=torch.float, device=x.device) # grid node mass
         
         #~~~~~~~~~~~ Particle state update and scatter to grid (P2G) ~~~~~~~~~~~#
-
         base = (x * self.inv_dx - 0.5).long() # [N, D], long, map [n + 0.5, n + 1.5) to n
         fx = x * self.inv_dx - base.float() # [N, D], float in [0.5, 1.5) (distance: [-0.5, 0.5))
         # * Quadratic kernels  [http://mpm.graphics   Eqn. 123, with x=fx, fx-1,fx-2]
@@ -64,15 +65,17 @@ class MPMModel(nn.Module):
                 # * add a Z coordinate to convert to 3D, then use 3D CUDA functions by Zhiao 
                 # mpm_p2g(coords=x, features=v or m, resolution, batch_index, dx)
                 resolution = (self.n_grid, self.n_grid, 3)
-                batch_index = torch.zeros(x.shape[:0], dtype=torch.int, device=x.device)
-                x_z = torch.ones((x.shape[0], 1), dtype=torch.long, device=x.device) * self.dx # (x, y) -> (x, y, dx)
-                m = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.float) * self.p_mass
-                grid_v = mpm_p2g(torch.cat([x, x_z], dim=1), v, resolution, batch_index, self.dx) # [1, 2, G, G, 3]
-                grid_m = mpm_p2g(torch.cat([x, x_z], dim=1), m, resolution, batch_index, self.dx) # [1, 1, G, G, 3]
-                return
-                
-                # TODO: project back to 2D (well this demo is still a 2D toy)
-                pass
+                batch_index = torch.zeros((x.shape[0], 1), dtype=torch.int, device=x.device)
+                x_3d = torch.cat([x, torch.ones((x.shape[0], 1), dtype=torch.float, device=x.device) * self.dx], dim=1) # (x, y) -> (x, y, dx)
+                v_add = self.p_mass * v + torch.bmm(affine, dpos[:, :, None]) # TODO: how to get dpos
+                m_add = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.float) * self.p_mass
+                grid_v = mpm_p2g(x_3d, v_add, resolution, batch_index, self.dx) # [1, 2, G, G, 3]
+                grid_m = mpm_p2g(x_3d, m_add, resolution, batch_index, self.dx) # [1, 1, G, G, 3]
+                # * project back to 2D (well this demo is still a 2D toy)
+                # print("grid_v", v.min(0)[0])
+                # print("grid_v", grid_v.squeeze(0).min(1)[0].min(1)[0])
+                grid_v = grid_v.sum(-1).squeeze(0).permute(1, 2, 0).contiguous() # [G, G, 2]
+                grid_m = grid_m.sum(-1).squeeze(0).squeeze(0) # [G, G]
             else:
                 for i in range(3):
                     for j in range(3):
@@ -95,8 +98,10 @@ class MPMModel(nn.Module):
         else:
             raise NotImplementedError
 
-        #~~~~~~~~~~~ some grid modifications ~~~~~~~~~~~#
+        # TODO: delete these test codes
+        print(grid_v.min(0)[0].min(0)[0])
 
+        #~~~~~~~~~~~ some grid modifications ~~~~~~~~~~~#
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask][:, None] # momentum to velocity
         grid_v[:, :, 1][non_empty_mask] -= self.dt * 50 # gravity
@@ -108,7 +113,6 @@ class MPMModel(nn.Module):
         torch.clamp_(grid_v[:, -3:, 1], max=0)
 
         #~~~~~~~~~~~ grid to particle (G2P) ~~~~~~~~~~~#
-
         new_v = torch.zeros_like(v)
         new_C = torch.zeros_like(C)
         
@@ -171,7 +175,7 @@ def main():
 
     initialize(x, v, C, F, material, Jp)
 
-    mpm_model = MPMModel(n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0)
+    mpm_model = MPMModel(n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0, use_cuda_functions=True)
 
     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
 

@@ -108,6 +108,8 @@ at::Tensor mpm_p2g_forward(const at::Tensor coords,
     CHECK_IS_FLOAT(coords);
     CHECK_IS_INT(batch_index);
 
+    // std::cout << coords << std::endl;
+
     int b = features.size(0);
     int c = features.size(1);
     at::Tensor voxel = torch::zeros(
@@ -117,6 +119,9 @@ at::Tensor mpm_p2g_forward(const at::Tensor coords,
     mpm_point2voxel(coords.data_ptr<float>(), features.data_ptr<float>(), gx,
                     gy, gz, dx, voxel.data_ptr<float>(),
                     batch_index.data_ptr<int>(), 0, c, b);
+
+    // std::cout << coords << std::endl;
+
     // return {out, ind, cnt};
     return voxel;
 }
