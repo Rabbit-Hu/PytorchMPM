@@ -11,6 +11,8 @@ import torch.nn as nn
 import torch.nn.functional as F 
 from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
+from torch.profiler import profile, record_function, ProfilerActivity
+
 import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
 ti.init(arch=ti.gpu)
 
@@ -213,6 +215,12 @@ def main(args):
     mpm_model = MPMModel(n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0, use_cuda_functions=not args.use_loop)
 
     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
+
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+        with record_function("model_inference"):
+            for s in range(int(2e-3 // dt)):
+                x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
+    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
 
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
     print()
