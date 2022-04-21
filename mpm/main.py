@@ -27,9 +27,6 @@ class MPMModel(nn.Module):
         self.use_cuda_functions = use_cuda_functions
 
     def forward(self, x, v, C, F, material, Jp):
-        grid_v = torch.zeros((self.n_grid, self.n_grid, self.n_dim), dtype=torch.float, device=x.device) # grid node momentum / velocity
-        grid_m = torch.zeros((self.n_grid, self.n_grid), dtype=torch.float, device=x.device) # grid node mass
-        
         #~~~~~~~~~~~ Particle state update and scatter to grid (P2G) ~~~~~~~~~~~#
         base = (x * self.inv_dx - 0.5).long() # [N, D], long, map [n + 0.5, n + 1.5) to n
         fx = x * self.inv_dx - base.float() # [N, D], float in [0.5, 1.5) (distance: [-0.5, 0.5))
@@ -59,52 +56,74 @@ class MPMModel(nn.Module):
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
 
-        # TODO: use the P2G extension
+        # // TODO: use the P2G extension
         if self.n_dim == 2:
             if self.use_cuda_functions:
+            # if False:
                 # * add a Z coordinate to convert to 3D, then use 3D CUDA functions by Zhiao 
                 # mpm_p2g(coords=x, features=v or m, resolution, batch_index, dx)
                 resolution = (self.n_grid, self.n_grid, 3)
                 batch_index = torch.zeros((x.shape[0], 1), dtype=torch.int, device=x.device)
                 x_3d = torch.cat([x, torch.ones((x.shape[0], 1), dtype=torch.float, device=x.device) * self.dx], dim=1) # (x, y) -> (x, y, dx)
-                v_add = self.p_mass * v + torch.bmm(affine, dpos[:, :, None]) # TODO: how to get dpos
-                m_add = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.float) * self.p_mass
+
+                # grid_v_add = weight[:, None] * (self.p_mass * v - torch.bmm(affine, x[:, :, None]).squeeze(-1))
+                v_add = self.p_mass * v - torch.bmm(affine, x[:, :, None]).squeeze(-1)
                 grid_v = mpm_p2g(x_3d, v_add, resolution, batch_index, self.dx) # [1, 2, G, G, 3]
+
+                # grid_affine_add = weight[:, None, None] * affine # [N, D, D] # ! but here we need 1d feature, so inflat the affine matrix
+                affine_add = affine.view(-1, self.n_dim**2)
+                grid_affine = mpm_p2g(x_3d, affine_add, resolution, batch_index, self.dx) # [1, 4, G, G, 3]
+
+                m_add = torch.ones((x.shape[0], 1), device=x.device, dtype=torch.float) * self.p_mass
                 grid_m = mpm_p2g(x_3d, m_add, resolution, batch_index, self.dx) # [1, 1, G, G, 3]
+
                 # * project back to 2D (well this demo is still a 2D toy)
-                # print("grid_v", v.min(0)[0])
-                # print("grid_v", grid_v.squeeze(0).min(1)[0].min(1)[0])
+                # print(grid_v.sum(3).sum(2).sum(0))
                 grid_v = grid_v.sum(-1).squeeze(0).permute(1, 2, 0).contiguous() # [G, G, 2]
                 grid_m = grid_m.sum(-1).squeeze(0).squeeze(0) # [G, G]
+                grid_affine = grid_affine.sum(-1).squeeze(0).permute(1, 2, 0).contiguous().view(self.n_grid, self.n_grid, self.n_dim, self.n_dim) # [G, G, 3, 3]
+                grid_x = torch.stack(torch.meshgrid(torch.arange(self.n_grid, device=x.device), torch.arange(self.n_grid, device=x.device)), dim=-1) * self.dx # [G, G, D]
+                grid_v += torch.matmul(grid_affine, grid_x[:, :, :, None]).squeeze(-1) # [G, G, D]
             else:
+                grid_v = torch.zeros((self.n_grid, self.n_grid, self.n_dim), dtype=torch.float, device=x.device) # grid node momentum / velocity
+                grid_m = torch.zeros((self.n_grid, self.n_grid), dtype=torch.float, device=x.device) # grid node mass
+                grid_affine = torch.zeros((self.n_grid, self.n_grid, self.n_dim, self.n_dim), dtype=torch.float, device=x.device) # weighted sum of affines
+
                 for i in range(3):
                     for j in range(3):
                         offset = torch.tensor([i, j], dtype=torch.long, device=x.device) # [2,]
-                        dpos = (offset.float()[None, :] - fx) * self.dx # [N, D]
+                        # dpos = (base + offset.float()[None, :]) * self.dx - x # [N, D]
                         weight = w[i][:, 0] * w[j][:, 1] # [N]
                         target = base + offset
 
                         # ! use atomic add function torch.Tensor.index_add_
                         # grid_v stores momentum (will be divided by m later)
-                        grid_v_add = weight[:, None] * (self.p_mass * v + torch.bmm(affine, dpos[:, :, None]).squeeze(-1))
+                        grid_v_add = weight[:, None] * (self.p_mass * v - torch.bmm(affine, x[:, :, None]).squeeze(-1))
                         grid_v = grid_v.view(self.n_grid**2, self.n_dim) # [G**2, D]
                         grid_v.index_add_(0, target[:, 0] * self.n_grid + target[:, 1], grid_v_add)
                         grid_v = grid_v.view(self.n_grid, self.n_grid, self.n_dim)
+
+                        grid_affine_add = weight[:, None, None] * affine # [N, D, D]
+                        grid_affine = grid_affine.view(self.n_grid**2, self.n_dim, self.n_dim) # [G**2, D]
+                        grid_affine.index_add_(0, target[:, 0] * self.n_grid + target[:, 1], grid_affine_add)
+                        grid_affine = grid_affine.view(self.n_grid, self.n_grid, self.n_dim, self.n_dim)
 
                         grid_m_add = weight * self.p_mass
                         grid_m = grid_m.view(self.n_grid**2)
                         grid_m.index_add_(0, target[:, 0] * self.n_grid + target[:, 1], grid_m_add)
                         grid_m = grid_m.view(self.n_grid, self.n_grid)
+                
+                grid_x = torch.stack(torch.meshgrid(torch.arange(self.n_grid, device=x.device), torch.arange(self.n_grid, device=x.device)), dim=-1) * self.dx # [G, G, D]
+                grid_v += torch.matmul(grid_affine, grid_x[:, :, :, None]).squeeze(-1) # [G, G, D]
         else:
             raise NotImplementedError
-
-        # TODO: delete these test codes
-        print(grid_v.min(0)[0].min(0)[0])
 
         #~~~~~~~~~~~ some grid modifications ~~~~~~~~~~~#
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask][:, None] # momentum to velocity
         grid_v[:, :, 1][non_empty_mask] -= self.dt * 50 # gravity
+
+        print("middle: ", grid_v.min())
 
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
@@ -113,24 +132,54 @@ class MPMModel(nn.Module):
         torch.clamp_(grid_v[:, -3:, 1], max=0)
 
         #~~~~~~~~~~~ grid to particle (G2P) ~~~~~~~~~~~#
-        new_v = torch.zeros_like(v)
-        new_C = torch.zeros_like(C)
         
         # TODO: use the G2P extension
         if self.n_dim == 2:
-            for i in range(3):
-                for j in range(3):
-                    offset = torch.tensor([i, j], dtype=torch.long, device=x.device) # [2,]
-                    dpos = offset.float() - fx # [N, D]
-                    weight = w[i][:, 0] * w[j][:, 1] # [N]
-                    target = base + offset
-                    g_v = grid_v[target[:, 0], target[:, 1], :] # [N, D]
-                    new_v += weight[:, None] * g_v
-                    new_C += 4 * self.inv_dx * weight[:, None, None] * (g_v[:, :, None] * dpos[:, None, :])
+            if self.use_cuda_functions:
+            # if False:
+                # * add a Z coordinate to convert to 3D, then use 3D CUDA functions by Zhiao 
+                # mpm_g2p(coords=x_32, voxels=grid_v, batch_index, dx), return features
+                resolution = (self.n_grid, self.n_grid, 3)
+                batch_index = torch.zeros((x.shape[0], 1), dtype=torch.int, device=x.device)
+                x_3d = torch.cat([x, torch.ones((x.shape[0], 1), dtype=torch.float, device=x.device) * self.dx], dim=1) # (x, y) -> (x, y, dx)
+                
+                grid_v = grid_v.permute(2, 0, 1).contiguous().unsqueeze(0) # [1, 2, G, G]
+                grid_v = torch.stack([0.125 * grid_v, 0.75 * grid_v, 0.125 * grid_v], dim=-1) # [1, 2, G, G, 3]
+                # print(grid_v.shape)
+
+                new_v = mpm_g2p(x_3d, grid_v, batch_index, self.dx)
+                
+                grid_x = torch.stack(torch.meshgrid(torch.arange(self.n_grid, device=x.device), torch.arange(self.n_grid, device=x.device)), dim=-1) * self.dx # [G, G, D]
+                grid_x = grid_x.permute(2, 0, 1).contiguous().unsqueeze(0).unsqueeze(-1) # [1, 2, G, G, 1]
+                grid_C = (grid_v[:, :, None, :, :, :] * grid_x[:, None, :, :, :, :]).view(1, self.n_dim**2, self.n_grid, self.n_grid, 3)
+                new_C = mpm_g2p(x_3d, grid_C, batch_index, self.dx) # [N, D]
+                new_C = new_C.view(-1, self.n_dim, self.n_dim)
+                new_C -= new_v[:, :, None] * x[:, None, :]
+                new_C *= 4 * self.inv_dx**2
+            else:
+                new_v = torch.zeros_like(v)
+                new_C = torch.zeros_like(C)
+                for i in range(3):
+                    for j in range(3):
+                        offset = torch.tensor([i, j], dtype=torch.long, device=x.device) # [2,]
+                        # dpos = offset.float() - fx # [N, D]
+                        weight = w[i][:, 0] * w[j][:, 1] # [N]
+                        target = base + offset
+                        g_v = grid_v[target[:, 0], target[:, 1], :] # [N, D]
+                        print(g_v.min())
+                        new_v += weight[:, None] * g_v # [N, 2]
+                        # new_C += 4 * self.inv_dx * weight[:, None, None] * (g_v[:, :, None] * dpos[:, None, :])
+                        # new_C += 4 * self.inv_dx**2 * weight[:, None, None] * (g_v[:, :, None] * ((base + offset) * self.dx - x)[:, None, :])
+                        new_C += weight[:, None, None] * g_v[:, :, None] * (base + offset)[:, None, :] * self.dx # [N, D]
+                new_C -= new_v[:, :, None] * x[:, None, :]
+                new_C *= 4 * self.inv_dx**2
+
+            # new_C = torch.zeros_like(C)
         else:
             raise NotImplementedError
 
         v = new_v
+        # print(v)
         C = new_C
         x += self.dt * v
 
@@ -180,9 +229,12 @@ def main():
     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
 
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+    # cnt = 0
     while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
         for s in range(int(2e-3 // dt)):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
+        # cnt += 1
+        # print(cnt)
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
         gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
         gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
