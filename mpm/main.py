@@ -2,6 +2,8 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import time
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -123,13 +125,11 @@ class MPMModel(nn.Module):
         grid_v[non_empty_mask] /= grid_m[non_empty_mask][:, None] # momentum to velocity
         grid_v[:, :, 1][non_empty_mask] -= self.dt * 50 # gravity
 
-        print("middle: ", grid_v.min())
-
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
-        torch.clamp_(grid_v[-3:, :, 0], max=0)
+        torch.clamp_(grid_v[-2:, :, 0], max=0)
         torch.clamp_(grid_v[:, :3, 1], min=0)
-        torch.clamp_(grid_v[:, -3:, 1], max=0)
+        torch.clamp_(grid_v[:, -2:, 1], max=0)
 
         #~~~~~~~~~~~ grid to particle (G2P) ~~~~~~~~~~~#
         
@@ -144,7 +144,8 @@ class MPMModel(nn.Module):
                 x_3d = torch.cat([x, torch.ones((x.shape[0], 1), dtype=torch.float, device=x.device) * self.dx], dim=1) # (x, y) -> (x, y, dx)
                 
                 grid_v = grid_v.permute(2, 0, 1).contiguous().unsqueeze(0) # [1, 2, G, G]
-                grid_v = torch.stack([0.125 * grid_v, 0.75 * grid_v, 0.125 * grid_v], dim=-1) # [1, 2, G, G, 3]
+                # grid_v = torch.stack([0.125 * grid_v, 0.75 * grid_v, 0.125 * grid_v], dim=-1) # [1, 2, G, G, 3]
+                grid_v = torch.stack([grid_v, grid_v, grid_v], dim=-1) # [1, 2, G, G, 3]
                 # print(grid_v.shape)
 
                 new_v = mpm_g2p(x_3d, grid_v, batch_index, self.dx)
@@ -166,7 +167,6 @@ class MPMModel(nn.Module):
                         weight = w[i][:, 0] * w[j][:, 1] # [N]
                         target = base + offset
                         g_v = grid_v[target[:, 0], target[:, 1], :] # [N, D]
-                        print(g_v.min())
                         new_v += weight[:, None] * g_v # [N, 2]
                         # new_C += 4 * self.inv_dx * weight[:, None, None] * (g_v[:, :, None] * dpos[:, None, :])
                         # new_C += 4 * self.inv_dx**2 * weight[:, None, None] * (g_v[:, :, None] * ((base + offset) * self.dx - x)[:, None, :])
@@ -229,12 +229,12 @@ def main():
     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
 
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
-    # cnt = 0
     while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+        last_time = time.time()
         for s in range(int(2e-3 // dt)):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-        # cnt += 1
-        # print(cnt)
+        delta_time = time.time() - last_time
+        print(f"FPS: {1/delta_time}")
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
         gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
         gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
