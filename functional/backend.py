@@ -9,5 +9,6 @@ lib = load(name='_pvcnn_backend',
                     'voxel.cu',
                     'voxel.cpp',
                     'bindings.cpp',
-                ]]
+                ]],
+                verbose=True # output more info
            )
