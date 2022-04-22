@@ -1,3 +1,0 @@
-[submodule "torch-batch-svd"]
-	path = torch-batch-svd
-	url = https://github.com/KinglittleQ/torch-batch-svd.git
