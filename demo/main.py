@@ -12,6 +12,8 @@ import torch.nn.functional as F
 from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 from torch.profiler import profile, record_function, ProfilerActivity
+# from torch_batch_svd import svd as fast_svd
+from pytorch_svd3x3 import svd3x3
 
 import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
 ti.init(arch=ti.gpu)
@@ -46,7 +48,14 @@ class MPMModel(nn.Module):
         mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
-        U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
+        # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
+        # U, sig, Vh = fast_svd(F)
+        F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        F_3x3[:, :2, :2] = F
+        U, sig, Vh = svd3x3(F_3x3)
+        Vh = Vh.transpose(-2, -1)
+        U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        # assert(torch.allclose(F, torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh)), atol=1e-5))
         snow_sig = sig[material == 2]
         clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
         Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
