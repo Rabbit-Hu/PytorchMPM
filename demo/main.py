@@ -129,7 +129,7 @@ class MPMModel(nn.Module):
         #~~~~~~~~~~~ some grid modifications ~~~~~~~~~~~#
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask][:, None] # momentum to velocity
-        grid_v[:, :, 1][non_empty_mask] -= self.dt * 50 # gravity
+        grid_v[:, :, 1] -= self.dt * 50 # gravity
 
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
