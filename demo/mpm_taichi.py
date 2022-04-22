@@ -2,6 +2,7 @@
 
 import taichi as ti
 import numpy as np
+import time
 ti.init(arch=ti.gpu) # Try to run on GPU
 quality = 1 # Use a larger value for higher-res simulations
 n_particles, n_grid = 9000 * quality ** 2, 128 * quality
@@ -93,9 +94,17 @@ def initialize():
         Jp[i] = 1
 initialize()
 gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+print()
+last_time = time.time()
+frame_cnt = 0
 while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     for s in range(int(2e-3 // dt)):
         substep()
+    frame_cnt += 1
+    if frame_cnt % 10 == 0:
+        delta_time = time.time() - last_time
+        last_time = time.time()
+        print(f"\033[FFPS: {10/delta_time}")
     colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
     gui.circles(x.to_numpy(), radius=1.5, color=colors[material.to_numpy()])
     gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
