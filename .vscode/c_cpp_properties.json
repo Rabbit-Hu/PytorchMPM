@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/root/anaconda3/lib/python3.9/site-packages/pybind11/include",
+                "/root/anaconda3/pkgs/pytorch-1.11.0-py3.9_cuda11.3_cudnn8.2.0_0/lib/python3.9/site-packages/torch/include/torch/csrc/api/include",
+                "/root/anaconda3/pkgs/pytorch-1.11.0-py3.9_cuda11.3_cudnn8.2.0_0/lib/python3.9/site-packages/torch/include",
+                "/usr/local/cuda-11.4/targets/x86_64-linux/include",
+                "/root/anaconda3/include",
+                "/root/anaconda3/include/python3.9"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}

@@ -27,17 +27,17 @@ mpm_point2voxel_kernel(
     int *__restrict__ batch_index,
     int direction, //0 p2g 1 g2p
     int c,
-    int dim)
+    int dim) // b (num of points)
 {
     int p = get_tid();
-    if (p < dim)
+    if (p < dim) // handle one particle
     {
         xyz = xyz + p * 3;
         int batch_id = batch_index[p];
-        feature = feature + p * c;
+        feature = feature + p * c; // feature[p]
 
-        int stride = grid_dim.x * grid_dim.y * grid_dim.z;
-        voxel = voxel + batch_id * c * stride;
+        int stride = grid_dim.x * grid_dim.y * grid_dim.z; // voxel: [B, C, gx, gy, gz]
+        voxel = voxel + batch_id * c * stride; // voxel[batch_id, c]
 
         vec3 x(xyz[0], xyz[1], xyz[2]);
         ivec3 base = cast_int(x * inv_dx - 0.5);

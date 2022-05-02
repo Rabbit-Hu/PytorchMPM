@@ -10,7 +10,7 @@
 
 #include <vector>
 
-#define MAXIMUM_THREADS 512
+#define MAXIMUM_THREADS 1024
 
 inline int optimal_num_threads(int work_size) {
   const int pow_2 = std::log2(static_cast<double>(work_size));
