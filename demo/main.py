@@ -145,7 +145,7 @@ def main():
     #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
     n_dim = 2 # 2D simulation
     quality = 1  # Use a larger value for higher-res simulations
-    n_particles, n_grid = 90000 * quality**2, 128 * quality
+    n_particles, n_grid = 9000 * quality**2, 128 * quality
     dx = 1 / n_grid
     # inv_dx = float(n_grid)
     dt = 1e-4 / quality
@@ -192,7 +192,10 @@ def main():
             print(f"\033[FFPS: {10/delta_time}")
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
         gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
-        gui.show() # Change to gui.show(f'{frame:06d}.png') to write images to disk
+        filename = f"/xiaodi-fast-vol/PytorchMPM/demo/output/{frame_cnt - 1:06d}.png"
+        # NOTE: use ffmpeg to convert saved frames to video:
+        #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
+        gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
     
 
 if __name__ == '__main__':
