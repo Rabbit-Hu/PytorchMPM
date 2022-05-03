@@ -136,5 +136,34 @@ class MPMModel(nn.Module):
 # ~~~~~~~~ Experiment 1: Jelly with varying E and nu ~~~~~~~~ #
 
 def jelly_vary_E_nu():
-    # * initialize 3~6 boxes
-    # * each with size from 
+    ''' initialize 1~6 boxes (no overlapping)
+        each with size from 0.05*0.05 to 0.2*0.2
+        and velocity 10 * randn() '''
+
+    n_boxes = np.random.rand(1, 6 + 1)
+    boxes = []
+    while len(boxes) < n_boxes:
+        box_w = np.random.rand() * (0.2 - 0.05) + 0.05
+        box_h = np.random.rand() * (0.2 - 0.05) + 0.05
+        box_x = np.random.rand() * (1 - box_w)
+        box_y = np.random.rand() * (1 - box_h)
+        #* detect overlapping
+        is_overlap = False
+        for box in boxes:
+            min_right_x = min(box_x + box_w, box['x'] + box['w'])
+            max_left_x = max(box_x, box['x'])
+            min_top_y = min(box_y + box_h, box['y'] + box['h'])
+            max_bottom_y = max(box_y, box['y'])
+            if min_right_x > max_left_x and min_top_y > max_bottom_y: # overlap
+                is_overlap = True
+                break
+        if not is_overlap:
+            box_v = np.random.randn(2) * 10
+            boxes.append({
+                'x': box_x,
+                'y': box_y,
+                'w': box_w,
+                'h': box_h,
+                'v': box_v,
+            })
+    
