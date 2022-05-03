@@ -29,6 +29,8 @@ material_id_to_name = {
     2: 'snow',
 }
 
+# TODO: move C inside! 
+
 class MPMModel(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
                  p_vol, p_rho, gravity):
@@ -208,10 +210,10 @@ def jelly_vary_E_nu(E_range=(5e2, 20e2), nu_range=(0.01, 0.4), n_boxes_range=(3,
 # ~~~~~ Hyper Parameters of the Environment ~~~~~ #
 n_dim = 2 # 2D simulation
 quality = 1  # Use a larger value for higher-res simulations
-particle_density, n_grid = 100000 * quality**2, 128 * quality
+particle_density, n_grid = 25000 * quality**2, 64 * quality
 dx = 1 / n_grid
 # inv_dx = float(n_grid)
-dt = 1e-4 / quality
+dt = 4e-4 / quality
 p_vol, p_rho = (dx * 0.5)**2, 1
 # p_mass = p_vol * p_rho
 gravity = 10
