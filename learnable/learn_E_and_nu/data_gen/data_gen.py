@@ -18,6 +18,10 @@ from pytorch_svd3x3 import svd3x3
 
 from model.model import MPMModel
 
+import taichi as ti # only for GUI
+ti.init(arch=ti.gpu)
+
+device = torch.device('cuda:0')
 
 material_id_to_name = {
     0: 'fluid',
@@ -26,15 +30,18 @@ material_id_to_name = {
 }
 
 class MPMModel(nn.Module):
-    def __init__(self, n_dim, n_particles, n_grid, dx, dt, \
-                 p_vol, p_rho, E, nu, mu_0, lambda_0):
+    def __init__(self, n_dim, n_grid, dx, dt, \
+                 p_vol, p_rho, gravity):
         super(MPMModel, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
-        self.n_dim, self.n_particles, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.E, self.nu, self.mu_0, self.lambda_0 = n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0
+        # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
+        self.n_dim, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.gravity = n_dim, n_grid, dx, dt, p_vol, p_rho, gravity
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
-    def forward(self, x, v, C, F, material, Jp):
+    def forward(self, x, v, C, F, material, Jp, E, nu):
+        mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
+
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
         base = (x * self.inv_dx - 0.5).int() # [N, D], int, map [n + 0.5, n + 1.5) to n
         fx = x * self.inv_dx - base.float() # [N, D], float in [0.5, 1.5) (distance: [-0.5, 0.5))
@@ -44,9 +51,9 @@ class MPMModel(nn.Module):
 
         # * hardening coefficient
         h = torch.exp(10 * (1. - Jp))
-        h[material == 1] = 0.3 # jelly
-        mu, lamda = self.mu_0 * h, self.lambda_0 * h # [N,]
-        mu[material == 0] = 0.0 # liquid
+        # h[material == 1] = 0.3 # jelly
+        mu, lamda = mu_0 * h, lambda_0 * h # [N,]
+        # mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
@@ -55,15 +62,14 @@ class MPMModel(nn.Module):
         U, sig, Vh = svd3x3(F_3x3)
         Vh = Vh.transpose(-2, -1)
         U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
-        # assert(torch.allclose(F, torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh)), atol=1e-5))
-        snow_sig = sig[material == 2]
-        clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
-        Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
-        sig[material == 2] = clamped_sig
+        # snow_sig = sig[material == 2]
+        # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
+        # Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
+        # sig[material == 2] = clamped_sig
         J = sig.prod(dim=-1) # [N,]
         
-        F[material == 0] = torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
-        F[material == 2] = torch.bmm(U[material == 2], torch.bmm(torch.diag_embed(sig[material == 2]), Vh[material == 2])) # snow
+        # F[material == 0] = torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
+        # F[material == 2] = torch.bmm(U[material == 2], torch.bmm(torch.diag_embed(sig[material == 2]), Vh[material == 2])) # snow
 
         # * stress
         stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
@@ -97,7 +103,7 @@ class MPMModel(nn.Module):
         #~~~~~~~~~~~ Grid update ~~~~~~~~~~~#
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask].unsqueeze(1) # momentum to velocity
-        grid_v[:, :, 1] -= self.dt * 50 # gravity
+        grid_v[:, :, 1] -= self.dt * self.gravity # gravity
 
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
@@ -135,18 +141,18 @@ class MPMModel(nn.Module):
 
 # ~~~~~~~~ Experiment 1: Jelly with varying E and nu ~~~~~~~~ #
 
-def jelly_vary_E_nu():
+def jelly_vary_E_nu(E_range=(5e2, 20e2), nu_range=(0.01, 0.4), n_boxes_range=(3, 6), box_size_range=(0.05, 0.3), scene_boundary=3/128, particle_density=100000):
     ''' initialize 1~6 boxes (no overlapping)
         each with size from 0.05*0.05 to 0.2*0.2
         and velocity 10 * randn() '''
 
-    n_boxes = np.random.rand(1, 6 + 1)
+    n_boxes = np.random.randint(n_boxes_range[0], n_boxes_range[1] + 1)
     boxes = []
     while len(boxes) < n_boxes:
-        box_w = np.random.rand() * (0.2 - 0.05) + 0.05
-        box_h = np.random.rand() * (0.2 - 0.05) + 0.05
-        box_x = np.random.rand() * (1 - box_w)
-        box_y = np.random.rand() * (1 - box_h)
+        box_w = np.random.rand() * (box_size_range[1] - box_size_range[0]) + box_size_range[0]
+        box_h = np.random.rand() * (box_size_range[1] - box_size_range[0]) + box_size_range[0]
+        box_x = np.random.rand() * (1 - box_w - 2 * scene_boundary) + scene_boundary
+        box_y = np.random.rand() * (1 - box_h - 2 * scene_boundary) + scene_boundary
         #* detect overlapping
         is_overlap = False
         for box in boxes:
@@ -158,7 +164,7 @@ def jelly_vary_E_nu():
                 is_overlap = True
                 break
         if not is_overlap:
-            box_v = np.random.randn(2) * 10
+            box_v = np.random.randn(2) * 5
             boxes.append({
                 'x': box_x,
                 'y': box_y,
@@ -167,3 +173,82 @@ def jelly_vary_E_nu():
                 'v': box_v,
             })
     
+    # * Visualize the boxes
+    # gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+    # for box in boxes:
+    #     gui.rect([box['x'], box['y']], [box['x'] + box['w'], box['y'] + box['h']])
+    # gui.show()
+    # input()
+
+    # TODO: try different ways of assigning particles to boxes
+    # * current strategy: distribute particles proportionally to the volumes of the boxes
+    # ? the relationship with p_vol?
+    
+    # sum_vol = sum([box['w'] * box['h'] for box in boxes])
+    x_list, v_list, C_list, F_list, material_list, Jp_list = [], [], [], [], [], []
+    for box in boxes:
+        box_particles = int(particle_density * box['w'] * box['h'])
+        x_list.append(torch.rand((box_particles, 2), dtype=torch.float, device=device) \
+                      * torch.tensor([box['w'], box['h']], dtype=torch.float, device=device)\
+                      + torch.tensor([box['x'], box['y']], dtype=torch.float, device=device))
+        v_list.append(torch.tensor(box['v'], dtype=torch.float, device=device)[None, :].repeat(box_particles, 1))
+        C_list.append(torch.zeros((box_particles, 2, 2), dtype=torch.float, device=device))
+        F_list.append(torch.eye(2, dtype=torch.float, device=device)[None, :, :].repeat(box_particles, 1, 1))
+        material_list.append(torch.ones((box_particles,), dtype=torch.int, device=device))
+        Jp_list.append(torch.ones((box_particles,), dtype=torch.float, device=device))
+
+    E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
+    nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
+        
+    return torch.cat(x_list, dim=0), torch.cat(v_list, dim=0), torch.cat(C_list, dim=0), \
+           torch.cat(F_list, dim=0), torch.cat(material_list, dim=0), torch.cat(Jp_list, dim=0), \
+           E, nu
+
+
+# ~~~~~ Hyper Parameters of the Environment ~~~~~ #
+n_dim = 2 # 2D simulation
+quality = 1  # Use a larger value for higher-res simulations
+particle_density, n_grid = 100000 * quality**2, 128 * quality
+dx = 1 / n_grid
+# inv_dx = float(n_grid)
+dt = 1e-4 / quality
+p_vol, p_rho = (dx * 0.5)**2, 1
+# p_mass = p_vol * p_rho
+gravity = 10
+
+mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
+
+# ~~~~~ Data Generation ~~~~~ #
+
+num_samples = 4 # NOTE: change it~
+max_frames = 500
+
+for sample_idx in range(num_samples):
+
+    # ~~~~~ Initialization ~~~~~ #
+    x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(particle_density=particle_density)
+    print(f"n_particle = {len(x)}, E = {E}, nu = {nu}")
+
+    # ~~~~~ Main Loop ~~~~~ #
+    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+    print()
+    last_time = time.time()
+    frame_cnt = 0
+    while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and frame_cnt < max_frames:
+        for s in range(int(2e-3 // dt)):
+            x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+        
+        # ~~~~~ Visualize and Save ~~~~~ #
+        colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
+        gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
+        # filename = f"/xiaodi-fast-vol/PytorchMPM/demo/output/{frame_cnt - 1:06d}.png"
+        # NOTE: use ffmpeg to convert saved frames to video:
+        #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
+        # gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
+        gui.show()
+
+        frame_cnt += 1
+        if frame_cnt % 10 == 0:
+            delta_time = time.time() - last_time
+            last_time = time.time()
+            print(f"\033[FFPS: {10/delta_time}")

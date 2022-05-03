@@ -21,7 +21,7 @@ class MPMModel(nn.Module):
                  p_vol, p_rho, E, nu, mu_0, lambda_0):
         super(MPMModel, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters (not learnable) ~~~~~~~~~~~#
-        self.n_dim, self.n_particles, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.mu_0, self.lambda_0 = n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, mu_0, lambda_0
+        self.n_dim, self.n_particles, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.E, self.nu, self.mu_0, self.lambda_0 = n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
