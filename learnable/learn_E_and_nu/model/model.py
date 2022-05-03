@@ -15,14 +15,6 @@ from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
 from pytorch_svd3x3 import svd3x3
 
-import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
-ti.init(arch=ti.gpu)
-
-import random
-random.seed(998244353)
-np.random.seed(998244353)
-torch.manual_seed(998244353)
-
 
 class MPMModel(nn.Module):
     def __init__(self, n_dim, n_particles, n_grid, dx, dt, \
@@ -206,4 +198,12 @@ def main():
     
 
 if __name__ == '__main__':
+    import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
+    ti.init(arch=ti.gpu)
+
+    import random
+    random.seed(998244353)
+    np.random.seed(998244353)
+    torch.manual_seed(998244353)
+    
     main()
