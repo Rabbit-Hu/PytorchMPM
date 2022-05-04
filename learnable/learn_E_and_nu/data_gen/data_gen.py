@@ -224,7 +224,7 @@ mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 
 # ~~~~~ Data Generation ~~~~~ #
 
-output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data'
+output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
 
 num_samples = 100
 max_frames = 250
