@@ -21,6 +21,11 @@ from model.model import MPMModel
 import taichi as ti # only for GUI
 ti.init(arch=ti.gpu)
 
+import random
+random.seed(998244353)
+np.random.seed(998244353)
+torch.manual_seed(998244353)
+
 device = torch.device('cuda:0')
 
 material_id_to_name = {
@@ -109,9 +114,9 @@ class MPMModel(nn.Module):
 
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
-        torch.clamp_(grid_v[-2:, :, 0], max=0)
+        torch.clamp_(grid_v[-3:, :, 0], max=0)
         torch.clamp_(grid_v[:, :3, 1], min=0)
-        torch.clamp_(grid_v[:, -2:, 1], max=0)
+        torch.clamp_(grid_v[:, -3:, 1], max=0)
 
         #~~~~~~~~~~~ Grid to particle (G2P) ~~~~~~~~~~~#
         
@@ -182,10 +187,7 @@ def jelly_vary_E_nu(E_range=(5e2, 20e2), nu_range=(0.01, 0.4), n_boxes_range=(3,
     # gui.show()
     # input()
 
-    # TODO: try different ways of assigning particles to boxes
-    # * current strategy: distribute particles proportionally to the volumes of the boxes
     # ? the relationship with p_vol?
-    
     # sum_vol = sum([box['w'] * box['h'] for box in boxes])
     x_list, v_list, C_list, F_list, material_list, Jp_list = [], [], [], [], [], []
     for box in boxes:
@@ -213,7 +215,7 @@ quality = 1  # Use a larger value for higher-res simulations
 particle_density, n_grid = 25000 * quality**2, 64 * quality
 dx = 1 / n_grid
 # inv_dx = float(n_grid)
-dt = 4e-4 / quality
+dt = 2e-4 / quality
 p_vol, p_rho = (dx * 0.5)**2, 1
 # p_mass = p_vol * p_rho
 gravity = 10
@@ -222,14 +224,14 @@ mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 
 # ~~~~~ Data Generation ~~~~~ #
 
-num_samples = 4 # NOTE: change it~
-max_frames = 500
+num_samples = 100 # NOTE: change it~
+max_frames = 250
 
 for sample_idx in range(num_samples):
 
     # ~~~~~ Initialization ~~~~~ #
     x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(particle_density=particle_density)
-    print(f"n_particle = {len(x)}, E = {E}, nu = {nu}")
+    print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}")
 
     # ~~~~~ Main Loop ~~~~~ #
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
@@ -242,7 +244,7 @@ for sample_idx in range(num_samples):
         
         # ~~~~~ Visualize and Save ~~~~~ #
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
-        gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
+        gui.circles(x.cpu().numpy(), radius=3, color=colors[material.cpu().numpy()])
         # filename = f"/xiaodi-fast-vol/PytorchMPM/demo/output/{frame_cnt - 1:06d}.png"
         # NOTE: use ffmpeg to convert saved frames to video:
         #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
