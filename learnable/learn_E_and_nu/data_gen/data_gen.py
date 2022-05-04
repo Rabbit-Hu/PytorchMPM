@@ -224,13 +224,38 @@ mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 
 # ~~~~~ Data Generation ~~~~~ #
 
-num_samples = 100 # NOTE: change it~
+output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data'
+
+num_samples = 100
 max_frames = 250
 
 for sample_idx in range(num_samples):
+    print(f"trajectory [{sample_idx}/{num_samples}]")
+
+    traj_dir = os.path.join(output_dir, f'traj_{sample_idx:04d}')
+    video_dir = os.path.join(traj_dir, f'video')
+    os.makedirs(video_dir, exist_ok=True)
+
     # ~~~~~ Initialization ~~~~~ #
     x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(particle_density=particle_density)
     print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}")
+
+    data_dict = {
+        'n_dim': n_dim,
+        'particle_density': particle_density,
+        'n_grid': n_grid,
+        'dt': dt,
+        'p_vol': p_vol,
+        'p_rho': p_rho,
+        'gravity': gravity,
+        'E': E,
+        'nu': nu
+    }
+
+    x_traj = [x]
+    v_traj = [v]
+    C_traj = [C]
+    F_traj = [F]
 
     # ~~~~~ Main Loop ~~~~~ #
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
@@ -241,17 +266,29 @@ for sample_idx in range(num_samples):
         for s in range(int(2e-3 // dt)):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
         
+        x_traj.append(x)
+        v_traj.append(v)
+        C_traj.append(C)
+        F_traj.append(F)
+        
         # ~~~~~ Visualize and Save ~~~~~ #
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
         gui.circles(x.cpu().numpy(), radius=3, color=colors[material.cpu().numpy()])
-        # filename = f"/xiaodi-fast-vol/PytorchMPM/demo/output/{frame_cnt - 1:06d}.png"
+        filename = os.path.join(video_dir, f"{frame_cnt:06d}.png")
         # NOTE: use ffmpeg to convert saved frames to video:
         #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
-        # gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
-        gui.show()
+        gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
+        # gui.show()
 
         frame_cnt += 1
         if frame_cnt % 10 == 0:
             delta_time = time.time() - last_time
             last_time = time.time()
             print(f"\033[FFPS: {10/delta_time}")
+
+    data_dict['x_traj'] = torch.stack(x_traj, dim=0)
+    data_dict['v_traj'] = torch.stack(v_traj, dim=0)
+    data_dict['C_traj'] = torch.stack(C_traj, dim=0)
+    data_dict['F_traj'] = torch.stack(F_traj, dim=0)
+
+    torch.save(data_dict, os.path.join(traj_dir, 'data_dict.pth'))

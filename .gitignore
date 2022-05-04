@@ -133,3 +133,4 @@ dmypy.json
 
 nohup.out
 demo/output
+/learnable/learn_E_and_nu/data/*
