@@ -228,7 +228,6 @@ num_samples = 100 # NOTE: change it~
 max_frames = 250
 
 for sample_idx in range(num_samples):
-
     # ~~~~~ Initialization ~~~~~ #
     x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(particle_density=particle_density)
     print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}")
