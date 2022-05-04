@@ -17,6 +17,7 @@ class Svd3x3(torch.autograd.Function):
             input: [N, 3, 3]
         '''
         n = inputs.shape[0]
+        # A = inputs.clone()
         inputs = inputs.permute(1, 2, 0).contiguous() # [3, 3, N]
         results = lib.svd3x3_forward(inputs) # [21, N]
         results = results.permute(1, 0).contiguous()
@@ -24,13 +25,14 @@ class Svd3x3(torch.autograd.Function):
         U = U.view(n, 3, 3)
         V = V.view(n, 3, 3)
 
-        ctx.save_for_backward(inputs, U, S, V)
+        ctx.save_for_backward(inputs.permute(2, 0, 1).contiguous(), U, S, V)
 
         return U, S, V
 
     @staticmethod
     def backward(ctx, grad_u: torch.Tensor, grad_s: torch.Tensor, grad_v: torch.Tensor):
         A, U, S, V = ctx.saved_tensors
+        print(A.shape)
         grad_out: torch.Tensor = lib.svd3x3_backward(
             [grad_u, grad_s, grad_v], A, True, True, U.to(A.dtype), S.to(A.dtype), V.to(A.dtype)
         )

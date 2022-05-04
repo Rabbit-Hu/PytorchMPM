@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
-from torch.profiler import profile, record_function, ProfilerActivity
+# from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
 from pytorch_svd3x3 import svd3x3
 
@@ -53,6 +53,7 @@ class MPMModel(nn.Module):
         U, sig, Vh = svd3x3(F_3x3)
         Vh = Vh.transpose(-2, -1)
         U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+
         # snow_sig = sig[material == 2]
         # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
         # Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
@@ -64,6 +65,7 @@ class MPMModel(nn.Module):
 
         # * stress
         stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
+        print(stress)
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
 
@@ -126,22 +128,12 @@ class MPMModel(nn.Module):
         return x + self.dt * v, new_v, new_C, F, material, Jp
 
 
-def initialize(x, v, C, F, material, Jp):
-    n_particles = len(x)
-    group_size = n_particles // 3
-    # TODO: convert into tensors to remove for loop
-    for i in range(n_particles):
-        x[i] = torch.tensor([np.random.rand() * 0.2 + 0.3 + 0.10 * (i // group_size), np.random.rand() * 0.2 + 0.05 + 0.32 * (i // group_size)])
-        material[i] = i // group_size # 0: fluid 1: jelly 2: snow
-        v[i] = torch.tensor([0, 0])
-        F[i] = torch.eye(2)
-        Jp[i] = 1
-
-
 def main():
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.gpu)
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+
+    device = torch.device('cuda:0')
 
     n_clip_per_traj = 1
     clip_len = 1
@@ -154,21 +146,22 @@ def main():
     data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
     traj_list = os.listdir(data_dir)
     for traj_name in traj_list:
-        data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'))
+        data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'), map_location="cpu")
+        print(data_dict)
         traj_len = len(data_dict['x_traj'])
         mpm_model = MPMModel(data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
                              data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity'])
-        E_gt, nu_gt = data_dict['E'], data_dict['nu'] # on cuda:0; modify data generator if this causes trouble
-        device = torch.device('cuda:0')
+        mpm_model = mpm_model.to(device)
+        E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
             #* get a random clip
             clip_start = np.random.randint(traj_len - clip_len)
             clip_end = clip_start + clip_len
-            x, v, C, F = data_dict['x_traj'][clip_start], data_dict['v_traj'][clip_start], \
-                         data_dict['C_traj'][clip_start], data_dict['F_traj'][clip_start]
-            x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end], data_dict['v_traj'][clip_end], \
-                                         data_dict['C_traj'][clip_end], data_dict['F_traj'][clip_end] 
+            x, v, C, F = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
+                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
+            x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
+                                         data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
             material = torch.ones((len(x),), dtype=torch.int, device=device)
             Jp = torch.ones((len(x),), dtype=torch.float, device=device)
             
@@ -179,15 +172,26 @@ def main():
             E.requires_grad_()
             nu.requires_grad_()
 
+            # x.requires_grad_()
+            # v.requires_grad_()
+            # C.requires_grad_()
+            # F.requires_grad_()
+
             print(f"init E = {E}, nu = {nu}")
+
+            criterion = nn.MSELoss()
 
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
-                for s in range(int(frame_dt // data_dict['dt'])):
+                # for s in range(int(frame_dt // data_dict['dt'])): # TODO: change back
+                for s in range(1):
                     print(f"s = {s}")
                     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
-                loss = nn.functional.mse_loss(x, x_end)
+                print("x     =", x)
+                print("x_end =", x_end)
+                loss = criterion(v, v_end)
+                # print(f"loss.device = {loss.device}")
                 loss.backward()
                 E -= grad_desc_lr * E.grad
                 nu -= grad_desc_lr * nu.grad
