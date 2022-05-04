@@ -1,7 +1,9 @@
 from pytorch_svd3x3 import svd3x3
 import torch
 
-A_torch = torch.randn(2, 3, 3).cuda()
+batch_size = 4
+
+A_torch = torch.randn(batch_size, 3, 3).cuda()
 A_33 = A_torch.clone()
 A_torch.requires_grad_()
 A_33.requires_grad_()
@@ -24,7 +26,7 @@ print("V_33   :", V_33)
 
 print("====== A.grad ======")
 
-U_c, sigma_c, V_c = torch.randn(2, 3, 3).cuda(), torch.randn(2, 3).cuda(), torch.randn(2, 3, 3).cuda()
+U_c, sigma_c, V_c = torch.randn(batch_size, 3, 3).cuda(), torch.randn(batch_size, 3).cuda(), torch.randn(batch_size, 3, 3).cuda()
 
 loss_torch = (U_c * U_torch**2).sum() + (sigma_c * sigma_torch**2).sum() + (V_c * V_torch**2).sum()
 loss_torch.backward()
@@ -32,4 +34,4 @@ print("loss_torch:", A_torch.grad)
 
 loss_33 = (U_c * U_33**2).sum() + (sigma_c * sigma_33**2).sum() + (V_c * V_33**2).sum()
 loss_33.backward()
-print("loss_torch:", A_33.grad)
+print("loss_33   :", A_33.grad)
