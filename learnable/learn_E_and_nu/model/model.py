@@ -8,28 +8,31 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F 
 from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
 from pytorch_svd3x3 import svd3x3
 
+import random
+random.seed(20010313)
+np.random.seed(20010313)
+torch.manual_seed(20010313)
+
 
 class MPMModel(nn.Module):
-    def __init__(self, n_dim, n_particles, n_grid, dx, dt, \
-                 p_vol, p_rho, E, nu, mu_0, lambda_0):
+    def __init__(self, n_dim, n_grid, dx, dt, \
+                 p_vol, p_rho, gravity):
         super(MPMModel, self).__init__()
-        #~~~~~~~~~~~ Hyper-Parameters (not learnable) ~~~~~~~~~~~#
-        self.n_dim, self.n_particles, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.E, self.nu, self.mu_0, self.lambda_0 = n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0
+        #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
+        # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
+        self.n_dim, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.gravity = n_dim, n_grid, dx, dt, p_vol, p_rho, gravity
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
-        #~~~~~~~~~~~ Learnable Parameters ~~~~~~~~~~~#
-        self.E = nn.Parameter(torch.tensor([E]))
-        self.nu = nn.Parameter(torch.tensor([nu]))
+    def forward(self, x, v, C, F, material, Jp, E, nu):
+        mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
 
-    def forward(self, x, v, C, F, material, Jp):
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
         base = (x * self.inv_dx - 0.5).int() # [N, D], int, map [n + 0.5, n + 1.5) to n
         fx = x * self.inv_dx - base.float() # [N, D], float in [0.5, 1.5) (distance: [-0.5, 0.5))
@@ -39,9 +42,9 @@ class MPMModel(nn.Module):
 
         # * hardening coefficient
         h = torch.exp(10 * (1. - Jp))
-        h[material == 1] = 0.3 # jelly
-        mu, lamda = self.mu_0 * h, self.lambda_0 * h # [N,]
-        mu[material == 0] = 0.0 # liquid
+        # h[material == 1] = 0.3 # jelly
+        mu, lamda = mu_0 * h, lambda_0 * h # [N,]
+        # mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
@@ -50,15 +53,14 @@ class MPMModel(nn.Module):
         U, sig, Vh = svd3x3(F_3x3)
         Vh = Vh.transpose(-2, -1)
         U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
-        # assert(torch.allclose(F, torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh)), atol=1e-5))
-        snow_sig = sig[material == 2]
-        clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
-        Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
-        sig[material == 2] = clamped_sig
+        # snow_sig = sig[material == 2]
+        # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
+        # Jp[material == 2] *= (snow_sig / clamped_sig).prod(dim=-1)
+        # sig[material == 2] = clamped_sig
         J = sig.prod(dim=-1) # [N,]
         
-        F[material == 0] = torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
-        F[material == 2] = torch.bmm(U[material == 2], torch.bmm(torch.diag_embed(sig[material == 2]), Vh[material == 2])) # snow
+        # F[material == 0] = torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
+        # F[material == 2] = torch.bmm(U[material == 2], torch.bmm(torch.diag_embed(sig[material == 2]), Vh[material == 2])) # snow
 
         # * stress
         stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
@@ -92,13 +94,13 @@ class MPMModel(nn.Module):
         #~~~~~~~~~~~ Grid update ~~~~~~~~~~~#
         non_empty_mask = grid_m > 0
         grid_v[non_empty_mask] /= grid_m[non_empty_mask].unsqueeze(1) # momentum to velocity
-        grid_v[:, :, 1] -= self.dt * 50 # gravity
+        grid_v[:, :, 1] -= self.dt * self.gravity # gravity
 
         # set velocity near boundary to 0
         torch.clamp_(grid_v[:3, :, 0], min=0)
-        torch.clamp_(grid_v[-2:, :, 0], max=0)
+        torch.clamp_(grid_v[-3:, :, 0], max=0)
         torch.clamp_(grid_v[:, :3, 1], min=0)
-        torch.clamp_(grid_v[:, -2:, 1], max=0)
+        torch.clamp_(grid_v[:, -3:, 1], max=0)
 
         #~~~~~~~~~~~ Grid to particle (G2P) ~~~~~~~~~~~#
         
@@ -108,6 +110,7 @@ class MPMModel(nn.Module):
         x_3d = torch.cat([x, torch.ones((x.shape[0], 1), dtype=torch.float, device=x.device) * self.dx], dim=1) # (x, y) -> (x, y, dx)
         
         grid_v = grid_v.permute(2, 0, 1).contiguous().unsqueeze(0) # [1, 2, G, G]
+        # ? how to generate fake grid_v?
         grid_v = torch.stack([grid_v, grid_v, grid_v], dim=-1) # [1, 2, G, G, 3]
 
         new_v = mpm_g2p(x_3d, grid_v, batch_index, self.dx)
@@ -120,11 +123,7 @@ class MPMModel(nn.Module):
         new_C -= new_v.unsqueeze(2) * x.unsqueeze(1)
         new_C *= 4 * self.inv_dx**2
 
-        v = new_v
-        C = new_C
-        x += self.dt * v
-
-        return x, v, C, F, material, Jp
+        return x + self.dt * v, new_v, new_C, F, material, Jp
 
 
 def initialize(x, v, C, F, material, Jp):
@@ -140,70 +139,62 @@ def initialize(x, v, C, F, material, Jp):
 
 
 def main():
-    #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
-    n_dim = 2 # 2D simulation
-    quality = 1  # Use a larger value for higher-res simulations
-    n_particles, n_grid = 9000 * quality**2, 128 * quality
-    dx = 1 / n_grid
-    # inv_dx = float(n_grid)
-    dt = 1e-4 / quality
-    p_vol, p_rho = (dx * 0.5)**2, 1
-    # p_mass = p_vol * p_rho
-    E, nu = 0.1e4, 0.2 # Young's modulus and Poisson's ratio
-    mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
-
-    #~~~~~~~~~~~ Device ~~~~~~~~~~~#
-    device = torch.device("cuda") if torch.cuda.is_available else torch.device("cpu")
-
-    #~~~~~~~~~~~ MPM particles ~~~~~~~~~~~#
-    x = torch.empty((n_particles, n_dim), dtype=torch.float, device=device) # position
-    v = torch.empty((n_particles, n_dim), dtype=torch.float, device=device) # velocity
-    C = torch.empty((n_particles, n_dim, n_dim), dtype=torch.float, device=device) # [N, D, D], affine velocity field
-    F = torch.empty((n_particles, n_dim, n_dim), dtype=torch.float, device=device) # [N, D, D], deformation gradient
-    material = torch.empty((n_particles,), dtype=torch.int, device=device) # [N, ] material id, {0: liquid, 1: jelly, 2: snow}
-    Jp = torch.empty((n_particles,), dtype=torch.float, device=device) # [N, ], plastic deformation
-
-    initialize(x, v, C, F, material, Jp)
-
-    mpm_model = MPMModel(n_dim, n_particles, n_grid, dx, dt, p_vol, p_rho, E, nu, mu_0, lambda_0)
-
-    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-
-    print("Profiling...")
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
-        with record_function("model_inference"):
-            for s in range(int(4e-3 // dt)):
-                x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-
-    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
-    print()
-    last_time = time.time()
-    frame_cnt = 0
-    while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
-        for s in range(int(2e-3 // dt)):
-            x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-        frame_cnt += 1
-        if frame_cnt % 10 == 0:
-            delta_time = time.time() - last_time
-            last_time = time.time()
-            print(f"\033[FFPS: {10/delta_time}")
-        colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
-        gui.circles(x.cpu().numpy(), radius=1.5, color=colors[material.cpu().numpy()])
-        # filename = f"/xiaodi-fast-vol/PytorchMPM/demo/output/{frame_cnt - 1:06d}.png"
-        ## NOTE: use ffmpeg to convert saved frames to video:
-        ##       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
-        # gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
-        gui.show()
-    
-
-if __name__ == '__main__':
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.gpu)
+    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
 
-    import random
-    random.seed(998244353)
-    np.random.seed(998244353)
-    torch.manual_seed(998244353)
+    n_clip_per_traj = 1
+    clip_len = 1
+    n_grad_desc_iter = 100
+    grad_desc_lr = 1e-3
     
+    frame_dt = 2e-3 # TODO: save frame_dt into data
+
+    #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
+    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
+    traj_list = os.listdir(data_dir)
+    for traj_name in traj_list:
+        data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'))
+        traj_len = len(data_dict['x_traj'])
+        mpm_model = MPMModel(data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
+                             data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity'])
+        E_gt, nu_gt = data_dict['E'], data_dict['nu'] # on cuda:0; modify data generator if this causes trouble
+        device = torch.device('cuda:0')
+
+        for clip_idx in range(n_clip_per_traj):
+            #* get a random clip
+            clip_start = np.random.randint(traj_len - clip_len)
+            clip_end = clip_start + clip_len
+            x, v, C, F = data_dict['x_traj'][clip_start], data_dict['v_traj'][clip_start], \
+                         data_dict['C_traj'][clip_start], data_dict['F_traj'][clip_start]
+            x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end], data_dict['v_traj'][clip_end], \
+                                         data_dict['C_traj'][clip_end], data_dict['F_traj'][clip_end] 
+            material = torch.ones((len(x),), dtype=torch.int, device=device)
+            Jp = torch.ones((len(x),), dtype=torch.float, device=device)
+            
+            E_range = (5e2, 20e2)
+            nu_range = (0.01, 0.4)
+            E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
+            nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
+            E.requires_grad_()
+            nu.requires_grad_()
+
+            print(f"init E = {E}, nu = {nu}")
+
+            for grad_desc_idx in range(n_grad_desc_iter):
+                if E.grad is not None: E.grad.zero_()
+                if nu.grad is not None: nu.grad.zero_()
+                for s in range(int(frame_dt // data_dict['dt'])):
+                    print(f"s = {s}")
+                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                loss = nn.functional.mse_loss(x, x_end)
+                loss.backward()
+                E -= grad_desc_lr * E.grad
+                nu -= grad_desc_lr * nu.grad
+
+                print(f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}")
+
+
+if __name__ == '__main__':
+    torch.autograd.set_detect_anomaly(True)
     main()
