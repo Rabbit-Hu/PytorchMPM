@@ -130,7 +130,7 @@ class MPMModel(nn.Module):
 
 def main():
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
-    ti.init(arch=ti.gpu)
+    ti.init(arch=ti.cpu)
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
 
     device = torch.device('cuda:0')
@@ -184,8 +184,8 @@ def main():
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
-                # for s in range(int(frame_dt // data_dict['dt'])): # TODO: change back
-                for s in range(1):
+                for s in range(int(frame_dt // data_dict['dt'])): # TODO: change back
+                # for s in range(1):
                     print(f"s = {s}")
                     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
                 print("x     =", x)
@@ -193,8 +193,8 @@ def main():
                 loss = criterion(v, v_end)
                 # print(f"loss.device = {loss.device}")
                 loss.backward()
-                E -= grad_desc_lr * E.grad
-                nu -= grad_desc_lr * nu.grad
+                E.data = E.data - grad_desc_lr * E.grad
+                nu.data = nu.data - grad_desc_lr * nu.grad
 
                 print(f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}")
 
