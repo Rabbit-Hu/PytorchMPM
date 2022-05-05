@@ -135,10 +135,10 @@ def main():
     device = torch.device('cuda:0')
 
     n_clip_per_traj = 1
-    clip_len = 1
-    n_grad_desc_iter = 100
-    E_lr = 1e1
-    nu_lr = 1e-6
+    clip_len = 10
+    n_grad_desc_iter = 200
+    E_lr = 1e2
+    nu_lr = 1e-3
     
     frame_dt = 2e-3 # TODO: save frame_dt into data
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
@@ -146,8 +146,9 @@ def main():
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
     data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
-    traj_list = os.listdir(data_dir)
+    traj_list = sorted(os.listdir(data_dir))
     for traj_name in traj_list:
+        
         data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'), map_location="cpu")
         # print(data_dict)
         traj_len = len(data_dict['x_traj'])
@@ -156,13 +157,22 @@ def main():
         E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
+            log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_E_and_nu/log', f'{traj_name}_clip_{clip_idx:04d}')
+            video_dir = os.path.join(log_dir, 'video')
+            os.makedirs(video_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, 'log.txt')
+
             #* get a random clip
             clip_start = np.random.randint(traj_len - clip_len)
             clip_end = clip_start + clip_len
+            with open(log_path, 'a+') as f:
+                log_str = f"traj_name = {traj_name}, clip_start = {clip_start}, clip_end = {clip_end}"
+                f.write(log_str + '\n')
+
             x_start, v_start, C_start, F_start = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
-                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
+                        data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
             x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
-                                         data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
+                                        data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
             material = torch.ones((len(x_start),), dtype=torch.int, device=device)
             Jp = torch.ones((len(x_start),), dtype=torch.float, device=device)
             
@@ -183,31 +193,44 @@ def main():
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
-                # traj = [(x, v, C, F, material, Jp)]
+
+                E.requires_grad_()
+                nu.requires_grad_()
                 
-                modules = [MPMModel(*mpm_model_init_params).to(device) for s in range(int(frame_dt // data_dict['dt']))]
+                # modules = [MPMModel(*mpm_model_init_params).to(device) for s in range(clip_len * int(frame_dt // data_dict['dt']))]
+                mpm_model = MPMModel(*mpm_model_init_params).to(device)
                 x, v, C, F = x_start, v_start, C_start, F_start
-                for s, module in enumerate(modules):
-                    x, v, C, F, material, Jp = module(x, v, C, F, material, Jp, E, nu)
-                # x, v, C, F, material, Jp = traj[-1]
-                x_scale = 1e5
+                # for s, module in enumerate(modules):
+                for s in range(clip_len * int(frame_dt // data_dict['dt'])):
+                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                # x_scale = 1e5
+                x_scale = 1e3
                 loss = criterion(x * x_scale, x_end * x_scale)
-                # print(f"sqrt(loss) = {torch.sqrt(loss)}")
+                # loss = criterion(v, v_end)
                 loss.backward(retain_graph=True)
                 # loss.backward()
-                # print("E.data =", E.data, "E.grad.data =", E.grad.data, "grad_desc_lr * E.grad.data =", grad_desc_lr * E.grad.data)
+                # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
                 with torch.no_grad():
                     E = E - E_lr * E.grad
                     torch.clamp_(E, min=E_range[0], max=E_range[1])
                     nu = nu - nu_lr * nu.grad
                     torch.clamp_(nu, min=nu_range[0], max=nu_range[1])
-                print(E.grad, nu.grad)
-                E.requires_grad_()
-                nu.requires_grad_()
 
                 # print("E.data =", E.data)
+                # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
+                gui.circles(x_start.detach().cpu().numpy(), radius=1.5, color=0x068587)
+                gui.circles(x.detach().cpu().numpy(), radius=1.5, color=0xED553B)
+                gui.circles(x_end.detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
+                filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
+                # NOTE: use ffmpeg to convert saved frames to video:
+                #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
+                gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
+                # gui.show()
 
-                print(f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}")
+                with open(log_path, 'a+') as f:
+                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}, loss = {loss.item()}"
+                    print(log_str)
+                    f.write(log_str + '\n')
 
 
 if __name__ == '__main__':

@@ -225,8 +225,9 @@ mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 # ~~~~~ Data Generation ~~~~~ #
 
 output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
+os.makedirs(output_dir, exist_ok=True)
 
-num_samples = 100
+num_samples = 10
 max_frames = 250
 
 for sample_idx in range(num_samples):
@@ -266,10 +267,10 @@ for sample_idx in range(num_samples):
         for s in range(int(2e-3 // dt)):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
         
-        x_traj.append(x)
-        v_traj.append(v)
-        C_traj.append(C)
-        F_traj.append(F)
+        x_traj.append(x.clone())
+        v_traj.append(v.clone())
+        C_traj.append(C.clone())
+        F_traj.append(F.clone())
         
         # ~~~~~ Visualize and Save ~~~~~ #
         colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
