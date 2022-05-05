@@ -216,15 +216,20 @@ particle_density, n_grid = 25000 * quality**2, 64 * quality
 dx = 1 / n_grid
 # inv_dx = float(n_grid)
 dt = 2e-4 / quality
+frame_dt = 2e-3
+n_iter_per_frame = int(frame_dt / dt + 0.5)
 p_vol, p_rho = (dx * 0.5)**2, 1
 # p_mass = p_vol * p_rho
 gravity = 10
+
+E_range = (5e2, 20e2)
+nu_range = (0.01, 0.4)
 
 mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 
 # ~~~~~ Data Generation ~~~~~ #
 
-output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
+output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly_v2'
 os.makedirs(output_dir, exist_ok=True)
 
 num_samples = 10
@@ -238,19 +243,22 @@ for sample_idx in range(num_samples):
     os.makedirs(video_dir, exist_ok=True)
 
     # ~~~~~ Initialization ~~~~~ #
-    x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(particle_density=particle_density)
-    print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}")
+    x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(E_range=E_range, nu_range=nu_range, particle_density=particle_density)
+    print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}, n_iter_per_frame = {n_iter_per_frame}")
 
     data_dict = {
         'n_dim': n_dim,
         'particle_density': particle_density,
         'n_grid': n_grid,
         'dt': dt,
+        'frame_dt': frame_dt,
         'p_vol': p_vol,
         'p_rho': p_rho,
         'gravity': gravity,
         'E': E,
-        'nu': nu
+        'nu': nu,
+        'E_range': E_range,
+        'nu_range': nu_range,
     }
 
     x_traj = [x]
@@ -264,7 +272,7 @@ for sample_idx in range(num_samples):
     last_time = time.time()
     frame_cnt = 0
     while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and frame_cnt < max_frames:
-        for s in range(int(2e-3 // dt)):
+        for s in range(n_iter_per_frame):
             x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
         
         x_traj.append(x.clone())
