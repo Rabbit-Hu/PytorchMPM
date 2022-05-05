@@ -140,7 +140,7 @@ def main():
     E_lr = 1e2
     nu_lr = 1e-3
     
-    frame_dt = 2e-3 # TODO: save frame_dt into data
+    frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
     nu_range = (0.01, 0.4)
 
