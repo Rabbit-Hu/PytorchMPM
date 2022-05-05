@@ -65,7 +65,6 @@ class MPMModel(nn.Module):
 
         # * stress
         stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
-        print(stress)
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
 
@@ -138,35 +137,35 @@ def main():
     n_clip_per_traj = 1
     clip_len = 1
     n_grad_desc_iter = 100
-    grad_desc_lr = 1e-3
+    E_lr = 1e1
+    nu_lr = 1e-6
     
     frame_dt = 2e-3 # TODO: save frame_dt into data
+    E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
+    nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
     data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
     traj_list = os.listdir(data_dir)
     for traj_name in traj_list:
         data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'), map_location="cpu")
-        print(data_dict)
+        # print(data_dict)
         traj_len = len(data_dict['x_traj'])
-        mpm_model = MPMModel(data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
-                             data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity'])
-        mpm_model = mpm_model.to(device)
+        mpm_model_init_params = data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
+                                data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity']
         E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
             #* get a random clip
             clip_start = np.random.randint(traj_len - clip_len)
             clip_end = clip_start + clip_len
-            x, v, C, F = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
+            x_start, v_start, C_start, F_start = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
                          data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
             x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
                                          data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
-            material = torch.ones((len(x),), dtype=torch.int, device=device)
-            Jp = torch.ones((len(x),), dtype=torch.float, device=device)
+            material = torch.ones((len(x_start),), dtype=torch.int, device=device)
+            Jp = torch.ones((len(x_start),), dtype=torch.float, device=device)
             
-            E_range = (5e2, 20e2)
-            nu_range = (0.01, 0.4)
             E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
             nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
             E.requires_grad_()
@@ -184,17 +183,29 @@ def main():
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
-                for s in range(int(frame_dt // data_dict['dt'])): # TODO: change back
-                # for s in range(1):
-                    print(f"s = {s}")
-                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
-                print("x     =", x)
-                print("x_end =", x_end)
-                loss = criterion(v, v_end)
-                # print(f"loss.device = {loss.device}")
-                loss.backward()
-                E.data = E.data - grad_desc_lr * E.grad
-                nu.data = nu.data - grad_desc_lr * nu.grad
+                # traj = [(x, v, C, F, material, Jp)]
+                
+                modules = [MPMModel(*mpm_model_init_params).to(device) for s in range(int(frame_dt // data_dict['dt']))]
+                x, v, C, F = x_start, v_start, C_start, F_start
+                for s, module in enumerate(modules):
+                    x, v, C, F, material, Jp = module(x, v, C, F, material, Jp, E, nu)
+                # x, v, C, F, material, Jp = traj[-1]
+                x_scale = 1e5
+                loss = criterion(x * x_scale, x_end * x_scale)
+                # print(f"sqrt(loss) = {torch.sqrt(loss)}")
+                loss.backward(retain_graph=True)
+                # loss.backward()
+                # print("E.data =", E.data, "E.grad.data =", E.grad.data, "grad_desc_lr * E.grad.data =", grad_desc_lr * E.grad.data)
+                with torch.no_grad():
+                    E = E - E_lr * E.grad
+                    torch.clamp_(E, min=E_range[0], max=E_range[1])
+                    nu = nu - nu_lr * nu.grad
+                    torch.clamp_(nu, min=nu_range[0], max=nu_range[1])
+                print(E.grad, nu.grad)
+                E.requires_grad_()
+                nu.requires_grad_()
+
+                # print("E.data =", E.data)
 
                 print(f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}")
 

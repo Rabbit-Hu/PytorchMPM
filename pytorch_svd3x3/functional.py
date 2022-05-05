@@ -32,7 +32,6 @@ class Svd3x3(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_u: torch.Tensor, grad_s: torch.Tensor, grad_v: torch.Tensor):
         A, U, S, V = ctx.saved_tensors
-        print(A.shape)
         grad_out: torch.Tensor = lib.svd3x3_backward(
             [grad_u, grad_s, grad_v], A, True, True, U.to(A.dtype), S.to(A.dtype), V.to(A.dtype)
         )
