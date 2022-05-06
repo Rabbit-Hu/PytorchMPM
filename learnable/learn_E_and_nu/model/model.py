@@ -135,11 +135,10 @@ def main(args):
     device = torch.device('cuda:0')
 
     n_clip_per_traj = 1
-    clip_len = 10
-    n_grad_desc_iter = 40
+    clip_len = args.clip_len
+    n_grad_desc_iter = args.n_grad_desc_iter
     E_lr = 1e2
     nu_lr = 1e-3
-    # C_lr = 1e6
     C_lr = 1e5
     F_lr = 1e-2
     
@@ -174,8 +173,13 @@ def main(args):
 
             x_start, v_start, C_start_gt, F_start_gt = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
-            x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
-                                        data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
+            # x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
+            #                             data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device)
+            x_traj, v_traj, C_traj, F_traj = data_dict['x_traj'][clip_start + 1: clip_end + 1].to(device), \
+                                             data_dict['v_traj'][clip_start + 1: clip_end + 1].to(device), \
+                                             data_dict['C_traj'][clip_start + 1: clip_end + 1].to(device), \
+                                             data_dict['F_traj'][clip_start + 1: clip_end + 1].to(device)
+
             material = torch.ones((len(x_start),), dtype=torch.int, device=device)
             Jp = torch.ones((len(x_start),), dtype=torch.float, device=device)
             
@@ -208,16 +212,21 @@ def main(args):
                 if args.learn_C: C_start.requires_grad_()
                 if args.learn_F: F_start.requires_grad_()
                 
-                # modules = [MPMModel(*mpm_model_init_params).to(device) for s in range(clip_len * int(frame_dt // data_dict['dt']))]
                 mpm_model = MPMModel(*mpm_model_init_params).to(device)
                 x, v, C, F = x_start, v_start, C_start, F_start
-                # for s, module in enumerate(modules):
-                for s in range(clip_len * int(data_dict['frame_dt'] // data_dict['dt'])):
-                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
-                    # print("C =", C)
-                # x_scale = 1e5
+
+                loss = 0
                 x_scale = 1e3
-                loss = criterion(x * x_scale, x_end * x_scale)
+                n_iter_per_frame = int(data_dict['frame_dt'] / data_dict['dt'])
+                for clip_frame in range(clip_len):
+                    for s in range(n_iter_per_frame):
+                        x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                    if args.multi_frame:
+                        loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
+                if not args.multi_frame:
+                    loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
+                else:
+                    loss /= clip_len
                 # loss = criterion(v, v_end)
                 loss.backward(retain_graph=True)
                 # loss.backward()
@@ -237,7 +246,7 @@ def main(args):
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
                 gui.circles(x_start.detach().cpu().numpy(), radius=1.5, color=0x068587)
                 gui.circles(x.detach().cpu().numpy(), radius=1.5, color=0xED553B)
-                gui.circles(x_end.detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
+                gui.circles(x_traj[clip_len - 1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
                 filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
                 # NOTE: use ffmpeg to convert saved frames to video:
                 #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
@@ -260,6 +269,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
+    parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
+    parser.add_argument('--n_grad_desc_iter', type=int, default=40, help='number of gradient descent iterations')
+    parser.add_argument('--multi_frame', action='store_true', help='supervised by all frames of the trajectory if multi_frame==True; otherwise single (ending) frame')
     args = parser.parse_args()
     print(args)
 
