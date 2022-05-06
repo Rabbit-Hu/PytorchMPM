@@ -127,7 +127,7 @@ class MPMModel(nn.Module):
         return x + self.dt * v, new_v, new_C, F, material, Jp
 
 
-def main():
+def main(args):
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.cpu)
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
@@ -136,16 +136,19 @@ def main():
 
     n_clip_per_traj = 1
     clip_len = 10
-    n_grad_desc_iter = 200
+    n_grad_desc_iter = 40
     E_lr = 1e2
     nu_lr = 1e-3
+    # C_lr = 1e6
+    C_lr = 1e5
+    F_lr = 1e-2
     
     frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
     nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
-    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
+    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly_v2'
     traj_list = sorted(os.listdir(data_dir))
     for traj_name in traj_list:
         
@@ -169,7 +172,7 @@ def main():
                 log_str = f"traj_name = {traj_name}, clip_start = {clip_start}, clip_end = {clip_end}"
                 f.write(log_str + '\n')
 
-            x_start, v_start, C_start, F_start = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
+            x_start, v_start, C_start_gt, F_start_gt = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
             x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
                                         data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device) 
@@ -178,31 +181,40 @@ def main():
             
             E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
             nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
-            E.requires_grad_()
-            nu.requires_grad_()
-
-            # x.requires_grad_()
-            # v.requires_grad_()
-            # C.requires_grad_()
-            # F.requires_grad_()
-
             print(f"init E = {E}, nu = {nu}")
+
+            if args.learn_C:
+                C_start = torch.zeros((len(x_start), 2, 2), dtype=torch.float, device=device)
+            else:
+                C_start = C_start_gt
+            
+            if args.learn_F:
+                F_start = torch.eye(2, dtype=torch.float, device=device)[None, :, :].repeat(len(x_start), 1, 1)
+                F_start += torch.randn_like(F_start) * 0.001
+                # print("F_start =", F_start)
+            else:
+                F_start = F_start_gt
 
             criterion = nn.MSELoss()
 
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
+                if args.learn_C and C_start.grad is not None: C_start.grad.zero_()
+                if args.learn_F and F_start.grad is not None: F_start.grad.zero_()
 
                 E.requires_grad_()
                 nu.requires_grad_()
+                if args.learn_C: C_start.requires_grad_()
+                if args.learn_F: F_start.requires_grad_()
                 
                 # modules = [MPMModel(*mpm_model_init_params).to(device) for s in range(clip_len * int(frame_dt // data_dict['dt']))]
                 mpm_model = MPMModel(*mpm_model_init_params).to(device)
                 x, v, C, F = x_start, v_start, C_start, F_start
                 # for s, module in enumerate(modules):
-                for s in range(clip_len * int(frame_dt // data_dict['dt'])):
+                for s in range(clip_len * int(data_dict['frame_dt'] // data_dict['dt'])):
                     x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                    # print("C =", C)
                 # x_scale = 1e5
                 x_scale = 1e3
                 loss = criterion(x * x_scale, x_end * x_scale)
@@ -210,11 +222,16 @@ def main():
                 loss.backward(retain_graph=True)
                 # loss.backward()
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
+                # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
                 with torch.no_grad():
                     E = E - E_lr * E.grad
                     torch.clamp_(E, min=E_range[0], max=E_range[1])
                     nu = nu - nu_lr * nu.grad
                     torch.clamp_(nu, min=nu_range[0], max=nu_range[1])
+                    if args.learn_C:
+                        C_start = C_start - C_lr * C_start.grad
+                    if args.learn_F:
+                        F_start = F_start - F_lr * F_start.grad
 
                 # print("E.data =", E.data)
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
@@ -229,10 +246,21 @@ def main():
 
                 with open(log_path, 'a+') as f:
                     log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}, loss = {loss.item()}"
+                    # if args.learn_C:
+                    #     log_str += f"\nC_start[:-2] = {C_start[:-2]}, C_start_gt[:-2] = {C_start_gt[:-2]}"
+                    # if args.learn_F:
+                    #     log_str += f"\nF_start[:-2] = {F_start[:-2]}, F_start_gt[:-2] = {F_start_gt[:-2]}"
                     print(log_str)
                     f.write(log_str + '\n')
 
 
 if __name__ == '__main__':
-    torch.autograd.set_detect_anomaly(True)
-    main()
+    # torch.autograd.set_detect_anomaly(True)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--learn_F', action='store_true')
+    parser.add_argument('--learn_C', action='store_true')
+    args = parser.parse_args()
+    print(args)
+
+    main(args)
