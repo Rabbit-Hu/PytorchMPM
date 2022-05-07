@@ -139,7 +139,7 @@ def main(args):
     n_grad_desc_iter = args.n_grad_desc_iter
     E_lr = 1e2
     nu_lr = 1e-3
-    C_lr = 1e5
+    C_lr = 0
     F_lr = 1e-2
     
     frame_dt = 2e-3
@@ -147,7 +147,7 @@ def main(args):
     nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
-    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly_v2'
+    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
     traj_list = sorted(os.listdir(data_dir))
     for traj_name in traj_list:
         
@@ -250,7 +250,7 @@ def main(args):
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
                 gui.circles(x_start.detach().cpu().numpy(), radius=1.5, color=0x068587)
                 gui.circles(x.detach().cpu().numpy(), radius=1.5, color=0xED553B)
-                gui.circles(x_traj[clip_len - 1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
+                gui.circles(x_traj[-1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
                 filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
                 # NOTE: use ffmpeg to convert saved frames to video:
                 #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
@@ -258,7 +258,7 @@ def main(args):
                 # gui.show()
 
                 with open(log_path, 'a+') as f:
-                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: E = {E.item()}, E_gt = {E_gt.item()}; nu = {nu.item()}, nu_gt = {nu_gt.item()}, loss = {loss.item()}"
+                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt.item():.2f}; nu={nu.item():.4f}, nu_gt={nu_gt.item():.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
                     # if args.learn_C:
                     #     log_str += f"\nC_start[:-2] = {C_start[:-2]}, C_start_gt[:-2] = {C_start_gt[:-2]}"
                     # if args.learn_F:
