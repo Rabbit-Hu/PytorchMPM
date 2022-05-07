@@ -134,7 +134,7 @@ def main(args):
 
     device = torch.device('cuda:0')
 
-    n_clip_per_traj = 1
+    n_clip_per_traj = 5
     clip_len = args.clip_len
     n_grad_desc_iter = args.n_grad_desc_iter
     E_lr = 1e2
@@ -228,6 +228,10 @@ def main(args):
                 else:
                     loss /= clip_len
                 # loss = criterion(v, v_end)
+
+                if loss.item() < 2:
+                    break
+
                 loss.backward(retain_graph=True)
                 # loss.backward()
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
