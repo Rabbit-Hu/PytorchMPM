@@ -30,7 +30,7 @@ class PsiModel2d(nn.Module):
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
             2d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2)
-                input_type == 'coeff': Psi = Psi(tr(F), det(F))
+                input_type == 'coeff': Psi = Psi(tr(C), det(C))
         '''
         super(PsiModel2d, self).__init__()
         assert input_type in ['eigen', 'coeff']
@@ -46,15 +46,18 @@ class PsiModel2d(nn.Module):
         )
     
     def forward(self, F):
-        tr_F = F[:, 0, 0] + F[:, 1, 1] # [B]
-        det_F = torch.linalg.det(F) # [B]
+        C = torch.bmm(F.transpose(1, 2), F)
+        tr_C = C[:, 0, 0] + C[:, 1, 1] # [B]
+        det_C = torch.linalg.det(C) # [B]
         if self.input_type == 'eigen':
-            sqrt_delta = torch.sqrt(tr_F**2 - 4 * det_F)
-            sigma_1 = 0.5 * (tr_F + sqrt_delta) # [B]
-            sigma_2 = 0.5 * (tr_F - sqrt_delta) # [B]
+            print("delta = ", tr_C**2 - 4 * det_C)
+            sqrt_delta = torch.sqrt(tr_C**2 - 4 * det_C)
+            sigma_1 = 0.5 * (tr_C + sqrt_delta) # [B]
+            sigma_2 = 0.5 * (tr_C - sqrt_delta) # [B]
+            print(sigma_1, sigma_2)
             feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
         else:
-            feat = torch.stack([tr_F, det_F], dim=1) # [B, 2]
+            feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
         out = self.mlp(feat) 
         return out # [B]
         
@@ -109,8 +112,7 @@ class MPMModel(nn.Module):
         # stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
         F.requires_grad_()
         Psi = self.psi_model(F)
-        stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)
-        print(stress)
+        stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
 
