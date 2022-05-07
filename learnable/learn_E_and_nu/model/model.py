@@ -143,8 +143,6 @@ def main(args):
     F_lr = 1e-2
     
     frame_dt = 2e-3
-    E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
-    nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
     data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
@@ -157,6 +155,7 @@ def main(args):
         mpm_model_init_params = data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
                                 data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity']
         E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
+        E_range, nu_range = data_dict['E_range'], data_dict['nu_range'] # TODO: save E_range and nu_range into data
 
         for clip_idx in range(n_clip_per_traj):
             log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_E_and_nu/log', f'{traj_name}_clip_{clip_idx:04d}')

@@ -1,5 +1,7 @@
 # Learn $E$ and $\nu$
 
-## Data Format
+## Usage
 
-From 
+```bash
+python model/model.py 
+```
