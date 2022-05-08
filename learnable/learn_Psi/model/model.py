@@ -210,7 +210,7 @@ def main(args):
         E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
-            log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_E_and_nu/log', f'{traj_name}_clip_{clip_idx:04d}')
+            log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', f'{traj_name}_clip_{clip_idx:04d}')
             video_dir = os.path.join(log_dir, 'video')
             os.makedirs(video_dir, exist_ok=True)
             log_path = os.path.join(log_dir, 'log.txt')
@@ -309,7 +309,7 @@ def main(args):
                 gui.circles(x_traj[-1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
                 filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
                 # NOTE: use ffmpeg to convert saved frames to video:
-                #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
+                #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
                 gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
                 # gui.show()
 
