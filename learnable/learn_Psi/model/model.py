@@ -50,11 +50,13 @@ class PsiModel2d(nn.Module):
         tr_C = C[:, 0, 0] + C[:, 1, 1] # [B]
         det_C = torch.linalg.det(C) # [B]
         if self.input_type == 'eigen':
-            print("delta = ", tr_C**2 - 4 * det_C)
-            sqrt_delta = torch.sqrt(tr_C**2 - 4 * det_C)
-            sigma_1 = 0.5 * (tr_C + sqrt_delta) # [B]
-            sigma_2 = 0.5 * (tr_C - sqrt_delta) # [B]
-            print(sigma_1, sigma_2)
+            # print("delta = ", tr_C**2 - 4 * det_C)
+            delta = tr_C**2 - 4 * det_C
+            torch.clamp_(delta, min=1e-8)
+            delta = torch.sqrt(delta)
+            sigma_1 = 0.5 * (tr_C + delta) # [B]
+            sigma_2 = 0.5 * (tr_C - delta) # [B]
+            # print(sigma_1, sigma_2)
             feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
         else:
             feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
@@ -189,6 +191,7 @@ def main(args):
     nu_lr = 1e-3
     C_lr = 0
     F_lr = 1e-2
+    Psi_lr = 1e-3
     
     frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
@@ -249,6 +252,9 @@ def main(args):
 
             criterion = nn.MSELoss()
 
+            mpm_model = MPMModel(*mpm_model_init_params).to(device)
+            optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
+
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
@@ -259,8 +265,9 @@ def main(args):
                 nu.requires_grad_()
                 if args.learn_C: C_start.requires_grad_()
                 if args.learn_F: F_start.requires_grad_()
+
+                optimizer.zero_grad()
                 
-                mpm_model = MPMModel(*mpm_model_init_params).to(device)
                 x, v, C, F = x_start, v_start, C_start, F_start
 
                 loss = 0
@@ -284,11 +291,12 @@ def main(args):
                 # loss.backward()
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
                 # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
+                optimizer.step()
                 with torch.no_grad():
-                    E = E - E_lr * E.grad
-                    torch.clamp_(E, min=E_range[0], max=E_range[1])
-                    nu = nu - nu_lr * nu.grad
-                    torch.clamp_(nu, min=nu_range[0], max=nu_range[1])
+                    # E = E - E_lr * E.grad
+                    # torch.clamp_(E, min=E_range[0], max=E_range[1])
+                    # nu = nu - nu_lr * nu.grad
+                    # torch.clamp_(nu, min=nu_range[0], max=nu_range[1])
                     if args.learn_C:
                         C_start = C_start - C_lr * C_start.grad
                     if args.learn_F:
