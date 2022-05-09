@@ -232,7 +232,9 @@ def main(args):
         for clip_idx in range(n_clip_per_traj):
             log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', f'{traj_name}_clip_{clip_idx:04d}')
             video_dir = os.path.join(log_dir, 'video')
+            model_dir = os.path.join(log_dir, 'model')
             os.makedirs(video_dir, exist_ok=True)
+            os.makedirs(model_dir, exist_ok=True)
             log_path = os.path.join(log_dir, 'log.txt')
 
             #* get a random clip
@@ -273,6 +275,7 @@ def main(args):
             criterion = nn.MSELoss()
 
             mpm_model = MPMModel(*mpm_model_init_params).to(device)
+            # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
             Psi_lr_decayed = Psi_lr
@@ -308,7 +311,7 @@ def main(args):
 
                 # if loss.item() < 2:
                 #     break
-                if loss.item() < 100 and Psi_lr_decayed > 1e-4:
+                if loss.item() < 20 and Psi_lr_decayed > 1e-4:
                     Psi_lr_decayed *= 0.7
                     print(f"Psi_lr_decayed = {Psi_lr_decayed}")
                     for g in optimizer.param_groups:
@@ -348,6 +351,9 @@ def main(args):
                     #     log_str += f"\nF_start[:-2] = {F_start[:-2]}, F_start_gt[:-2] = {F_start_gt[:-2]}"
                     print(log_str)
                     f.write(log_str + '\n')
+                
+                if (grad_desc_idx + 1) % 10 == 0:
+                    torch.save(mpm_model.state_dict(), os.path.join(model_dir, f'checkpoint_{grad_desc_idx:04d}_loss_{loss.item():.2f}.pth'))
 
 
 if __name__ == '__main__':
