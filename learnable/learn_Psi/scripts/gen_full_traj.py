@@ -47,8 +47,12 @@ def main(args):
     nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
 
     log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', f'{os.path.split(args.traj_path)[-1]}_gen')
-    video_dir = os.path.join(log_dir, 'video')
-    os.makedirs(video_dir, exist_ok=True)
+    video_gt_dir = os.path.join(log_dir, 'video_gt')
+    video_pred_dir = os.path.join(log_dir, 'video_pred')
+    video_guess_dir = os.path.join(log_dir, 'video_guess')
+    os.makedirs(video_gt_dir, exist_ok=True)
+    os.makedirs(video_pred_dir, exist_ok=True)
+    os.makedirs(video_guess_dir, exist_ok=True)
 
     x_traj = data_dict['x_traj']
     x_phi, v_phi, C_phi, F_phi = data_dict['x_traj'][args.start_frame].to(device), data_dict['v_traj'][args.start_frame].to(device), \
@@ -71,10 +75,11 @@ def main(args):
             gui_gt.circles(x_traj[frame_i].numpy(), radius=1.5, color=0xEEEEF0)
             gui_pred.circles(x_phi.detach().cpu().numpy(), radius=1.5, color=0xED553B)
             gui_guess.circles(x_enu.detach().cpu().numpy(), radius=1.5, color=0x068587)
-            filename = os.path.join(video_dir, f"{frame_i:06d}.png")
             # NOTE: use ffmpeg to convert saved frames to video:
             #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
-            gui_pred.show(os.path.join(video_dir, f"{frame_i:06d}.png")) # Change to gui.show(f'{frame:06d}.png') to write images to disk
+            gui_gt.show(os.path.join(video_gt_dir, f"{frame_i:06d}.png"))
+            gui_pred.show(os.path.join(video_pred_dir, f"{frame_i:06d}.png"))
+            gui_guess.show(os.path.join(video_guess_dir, f"{frame_i:06d}.png"))
         
 
 
