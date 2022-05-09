@@ -24,19 +24,21 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
             2d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2)
                 input_type == 'coeff': Psi = Psi(tr(C), det(C))
+            learn: False: only use guessed E and nu
         '''
         super(PsiModel2d, self).__init__()
         assert input_type in ['eigen', 'coeff']
         assert (not correcting) or input_type == 'eigen'
         self.input_type = input_type
         self.correcting = correcting
+        self.learn = learn
         self.mlp = nn.Sequential(
             nn.Linear(2, hidden_dim),
             nn.ReLU(),
@@ -71,6 +73,8 @@ class PsiModel2d(nn.Module):
 
             if self.correcting:
                 Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
+                if not self.learn:
+                    return Psi_est
         else:
             feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
         out = self.mlp(feat).squeeze(-1)
@@ -83,20 +87,20 @@ class PsiModel2d(nn.Module):
         
 
 
-class MPMModel(nn.Module):
+class MPMModelLearnedPhi(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
-                 p_vol, p_rho, gravity):
-        super(MPMModel, self).__init__()
+                 p_vol, p_rho, gravity, learn_phi=True):
+        super(MPMModelLearnedPhi, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
         # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
         self.n_dim, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.gravity = n_dim, n_grid, dx, dt, p_vol, p_rho, gravity
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
-        self.psi_model = PsiModel2d(input_type='eigen', hidden_dim=16)
+        self.psi_model = PsiModel2d(input_type='eigen', hidden_dim=16, learn=learn_phi)
 
     def forward(self, x, v, C, F, material, Jp, E, nu):
-        mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
+        # mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
 
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
         base = (x * self.inv_dx - 0.5).int() # [N, D], int, map [n + 0.5, n + 1.5) to n
@@ -106,9 +110,9 @@ class MPMModel(nn.Module):
         F = F + self.dt * torch.bmm(C, F)
 
         # * hardening coefficient
-        h = torch.exp(10 * (1. - Jp))
+        # h = torch.exp(10 * (1. - Jp))
         # h[material == 1] = 0.3 # jelly
-        mu, lamda = mu_0 * h, lambda_0 * h # [N,]
+        # mu, lamda = mu_0 * h, lambda_0 * h # [N,]
         # mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
@@ -130,9 +134,10 @@ class MPMModel(nn.Module):
 
         # * stress
         # stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
-        F.requires_grad_()
-        Psi = self.psi_model(F)
-        stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
+        with torch.enable_grad():
+            F.requires_grad_()
+            Psi = self.psi_model(F)
+            stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
         stress = torch.bmm(stress, F.transpose(-1, -2))
         # print("stress.abs.max =", torch.abs(stress).max())
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
@@ -230,7 +235,7 @@ def main(args):
         E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
-            log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', f'{traj_name}_clip_{clip_idx:04d}')
+            log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', args.exp_name, f'{traj_name}_clip_{clip_idx:04d}')
             video_dir = os.path.join(log_dir, 'video')
             model_dir = os.path.join(log_dir, 'model')
             os.makedirs(video_dir, exist_ok=True)
@@ -274,7 +279,7 @@ def main(args):
 
             criterion = nn.MSELoss()
 
-            mpm_model = MPMModel(*mpm_model_init_params).to(device)
+            mpm_model = MPMModelLearnedPhi(*mpm_model_init_params).to(device)
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
@@ -360,6 +365,7 @@ if __name__ == '__main__':
     # torch.autograd.set_detect_anomaly(True)
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_name', type=str, default='exp')
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
