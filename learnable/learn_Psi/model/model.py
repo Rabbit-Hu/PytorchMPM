@@ -24,7 +24,7 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', hidden_dim=16):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -34,14 +34,18 @@ class PsiModel2d(nn.Module):
         '''
         super(PsiModel2d, self).__init__()
         assert input_type in ['eigen', 'coeff']
+        assert (not correcting) or input_type == 'eigen'
         self.input_type = input_type
+        self.correcting = correcting
         self.mlp = nn.Sequential(
             nn.Linear(2, hidden_dim),
             nn.ReLU(),
+            # nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            # nn.Tanh(),
+            # nn.Linear(hidden_dim, hidden_dim),
+            # nn.ReLU(),
             nn.Linear(hidden_dim, 1),
         )
     
@@ -49,6 +53,12 @@ class PsiModel2d(nn.Module):
         C = torch.bmm(F.transpose(1, 2), F)
         tr_C = C[:, 0, 0] + C[:, 1, 1] # [B]
         det_C = torch.linalg.det(C) # [B]
+        
+        E = 1000
+        nu = 0.2
+        mu = E / (2 * (1 + nu))
+        la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
+
         if self.input_type == 'eigen':
             # print("delta = ", tr_C**2 - 4 * det_C)
             delta = tr_C**2 - 4 * det_C
@@ -58,10 +68,18 @@ class PsiModel2d(nn.Module):
             sigma_2 = 0.5 * (tr_C - delta) # [B]
             # print(sigma_1, sigma_2)
             feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
+
+            if self.correcting:
+                Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
         else:
             feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
-        out = self.mlp(feat) 
+        out = self.mlp(feat).squeeze(-1)
+        if self.correcting:
+            # print("out:", out.shape, " Psi:", Psi_est.shape)
+            out += Psi_est
+            # out = Psi_est
         return out # [B]
+
         
 
 
@@ -115,6 +133,8 @@ class MPMModel(nn.Module):
         F.requires_grad_()
         Psi = self.psi_model(F)
         stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
+        stress = torch.bmm(stress, F.transpose(-1, -2))
+        # print("stress.abs.max =", torch.abs(stress).max())
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
         affine = stress + self.p_mass * C # [N, D, D]
 
@@ -191,7 +211,7 @@ def main(args):
     nu_lr = 1e-3
     C_lr = 0
     F_lr = 1e-2
-    Psi_lr = 1e-3
+    Psi_lr = 3e-2
     
     frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
@@ -255,6 +275,8 @@ def main(args):
             mpm_model = MPMModel(*mpm_model_init_params).to(device)
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
+            Psi_lr_decayed = Psi_lr
+
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
@@ -284,11 +306,16 @@ def main(args):
                     loss /= clip_len
                 # loss = criterion(v, v_end)
 
-                if loss.item() < 2:
-                    break
+                # if loss.item() < 2:
+                #     break
+                if loss.item() < 100 and Psi_lr_decayed > 1e-4:
+                    Psi_lr_decayed *= 0.7
+                    print(f"Psi_lr_decayed = {Psi_lr_decayed}")
+                    for g in optimizer.param_groups:
+                        g['lr'] = Psi_lr_decayed
 
-                loss.backward(retain_graph=True)
-                # loss.backward()
+                # loss.backward(retain_graph=True)
+                loss.backward()
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
                 # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
                 optimizer.step()
