@@ -27,9 +27,13 @@ torch.manual_seed(20010313)
 
 
 def main(args):
+    import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
+    ti.init(arch=ti.cpu)
+    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+
     device = torch.device('cuda:0')
 
-    train_dataset = JellyV2Dataset('learnable/learn_Psi/data/jelly_v2/config_0000', split='train', clip_len=args.clip_len)
+    train_dataset = JellyV2Dataset(args.data_dir, split='train', clip_len=args.clip_len)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1, shuffle=True)
 
     config_dict = train_dataset.config_dict
@@ -43,7 +47,12 @@ def main(args):
     E_range = config_dict['E_range']
     nu_range = config_dict['nu_range']
 
-    # log_dir = os.path.join('learnable/learn_Psi/log', args.exp_name, f'{traj_name}_clip_{clip_idx:04d}')
+    log_dir = os.path.join('learnable/learn_Psi/log', args.exp_name, os.path.split(args.data_dir)[-1])
+    video_dir = os.path.join(log_dir, 'video')
+    model_dir = os.path.join(log_dir, 'model')
+    os.makedirs(video_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, 'log.txt')
 
     mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity).to(device)
     optimizer = torch.optim.SGD(mpm_model.parameters(), lr=args.Psi_lr)
@@ -70,12 +79,21 @@ def main(args):
                 loss = criterion(x * x_scale, x_traj[-1] * x_scale)
             else:
                 loss /= args.clip_len
+            
+            loss.backward()
 
             log_str = f"iter [{epoch}/{args.n_epoch}] sample[{sample_id}/{len(train_loader)}]: loss={loss.item():.4f}"
             print(log_str)
+
+            gui.circles(x_traj[0].detach().cpu().numpy(), radius=1.5, color=0x068587)
+            gui.circles(x.detach().cpu().numpy(), radius=1.5, color=0xED553B)
+            gui.circles(x_traj[-1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
+            filename = os.path.join(video_dir, f"sample{sample_id:06d}_epoch{epoch:03d}.png")
+            # NOTE: use ffmpeg to convert saved frames to video:
+            #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
+            gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
             
             if (sample_id + 1) % args.grad_accu == 0:
-                loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
 
