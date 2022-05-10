@@ -45,7 +45,7 @@ def main(args):
 
     # log_dir = os.path.join('learnable/learn_Psi/log', args.exp_name, f'{traj_name}_clip_{clip_idx:04d}')
 
-    mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity)
+    mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity).to(device)
     optimizer = torch.optim.SGD(mpm_model.parameters(), lr=args.Psi_lr)
 
     criterion = nn.MSELoss()
@@ -58,20 +58,26 @@ def main(args):
             material = torch.ones((x_traj.shape[1],), dtype=torch.int, device=device) # [n_particles,]
             Jp = torch.ones((x_traj.shape[1],), dtype=torch.float, device=device) # [n_particles,]
             
-            loss = 0
             x_scale = 1e3
+            loss = 0
             x, v, C, F = x_traj[0], v_traj[0], C_traj[0], F_traj[0]
-            for clip_frame in range(1, clip_len + 1):
+            for clip_frame in range(1, args.clip_len + 1):
                 for s in range(n_iter_per_frame):
-                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
                 if args.multi_frame:
                     loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
             if not args.multi_frame:
                 loss = criterion(x * x_scale, x_traj[-1] * x_scale)
             else:
-                loss /= clip_len
+                loss /= args.clip_len
+
+            log_str = f"iter [{epoch}/{args.n_epoch}] sample[{sample_id}/{len(train_loader)}]: loss={loss.item():.4f}"
+            print(log_str)
             
-            
+            if (sample_id + 1) % args.grad_accu == 0:
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
 
 
 if __name__ == '__main__':

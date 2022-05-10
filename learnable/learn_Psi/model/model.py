@@ -99,7 +99,7 @@ class MPMModelLearnedPhi(nn.Module):
 
         self.psi_model = PsiModel2d(input_type='eigen', hidden_dim=16, learn=learn_phi)
 
-    def forward(self, x, v, C, F, material, Jp, E, nu):
+    def forward(self, x, v, C, F, material, Jp):
         # mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
 
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
