@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.
 
 import time
 import argparse
+import json
 
 import numpy as np
 import torch
@@ -15,8 +16,6 @@ from functional import avg_voxelize, mpm_p2g, mpm_g2p
 from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
 from pytorch_svd3x3 import svd3x3
-
-from model.model import MPMModel
 
 import taichi as ti # only for GUI
 ti.init(arch=ti.gpu)
@@ -201,12 +200,8 @@ def jelly_vary_E_nu(E_range=(5e2, 20e2), nu_range=(0.01, 0.4), n_boxes_range=(3,
         material_list.append(torch.ones((box_particles,), dtype=torch.int, device=device))
         Jp_list.append(torch.ones((box_particles,), dtype=torch.float, device=device))
 
-    E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
-    nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
-        
     return torch.cat(x_list, dim=0), torch.cat(v_list, dim=0), torch.cat(C_list, dim=0), \
            torch.cat(F_list, dim=0), torch.cat(material_list, dim=0), torch.cat(Jp_list, dim=0), \
-           E, nu
 
 
 # ~~~~~ Hyper Parameters of the Environment ~~~~~ #
@@ -229,24 +224,22 @@ mpm_model = MPMModel(n_dim, n_grid, dx, dt, p_vol, p_rho, gravity)
 
 # ~~~~~ Data Generation ~~~~~ #
 
-output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
+output_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2'
 os.makedirs(output_dir, exist_ok=True)
 
-num_samples = 10
-max_frames = 250
+num_configs = 4 # Number of configurations (E, nu)
+num_trajs_train, num_trajs_val = 40, 10 # Number of trajectories
+max_frames = 100
 
-for sample_idx in range(num_samples):
-    print(f"trajectory [{sample_idx}/{num_samples}]")
 
-    traj_dir = os.path.join(output_dir, f'traj_{sample_idx:04d}')
-    video_dir = os.path.join(traj_dir, f'video')
-    os.makedirs(video_dir, exist_ok=True)
+for config_idx in range(num_configs):
+    config_dir = os.path.join(output_dir, f'config_{config_idx:04d}')
+    os.makedirs(config_dir, exist_ok=True)
 
-    # ~~~~~ Initialization ~~~~~ #
-    x, v, C, F, material, Jp, E, nu = jelly_vary_E_nu(E_range=E_range, nu_range=nu_range, particle_density=particle_density)
-    print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}, n_iter_per_frame = {n_iter_per_frame}")
+    E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
+    nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
 
-    data_dict = {
+    config_dict = {
         'n_dim': n_dim,
         'particle_density': particle_density,
         'n_grid': n_grid,
@@ -255,49 +248,68 @@ for sample_idx in range(num_samples):
         'p_vol': p_vol,
         'p_rho': p_rho,
         'gravity': gravity,
-        'E': E,
-        'nu': nu,
+        'E': E.item(),
+        'nu': nu.item(),
         'E_range': E_range,
         'nu_range': nu_range,
+        'splits': {
+            'train': [f'traj_{traj_idx:04d}' for traj_idx in range(0, num_trajs_train)],
+            'val': [f'traj_{traj_idx:04d}' for traj_idx in range(num_trajs_train, num_trajs_train + num_trajs_val)],
+        }
     }
+    with open(os.path.join(config_dir, 'config_dict.json'), 'w') as f:
+        json.dump(config_dict, f)
 
-    x_traj = [x.clone()]
-    v_traj = [v.clone()]
-    C_traj = [C.clone()]
-    F_traj = [F.clone()]
+    for traj_idx in range(num_trajs_train + num_trajs_val):
+        print(f"config [{config_idx}/{num_configs}] trajectory [{traj_idx}/{num_trajs_train + num_trajs_val}]")
 
-    # ~~~~~ Main Loop ~~~~~ #
-    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
-    print()
-    last_time = time.time()
-    frame_cnt = 0
-    while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and frame_cnt < max_frames:
-        for s in range(n_iter_per_frame):
-            x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
-        
-        x_traj.append(x.clone())
-        v_traj.append(v.clone())
-        C_traj.append(C.clone())
-        F_traj.append(F.clone())
-        
-        # ~~~~~ Visualize and Save ~~~~~ #
-        colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
-        gui.circles(x.cpu().numpy(), radius=3, color=colors[material.cpu().numpy()])
-        filename = os.path.join(video_dir, f"{frame_cnt:06d}.png")
-        # NOTE: use ffmpeg to convert saved frames to video:
-        #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
-        gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
-        # gui.show()
+        traj_dir = os.path.join(config_dir, f'traj_{traj_idx:04d}')
+        video_dir = os.path.join(traj_dir, f'video')
+        os.makedirs(video_dir, exist_ok=True)
 
-        frame_cnt += 1
-        if frame_cnt % 10 == 0:
-            delta_time = time.time() - last_time
-            last_time = time.time()
-            print(f"\033[FFPS: {10/delta_time}")
+        # ~~~~~ Initialization ~~~~~ #
+        x, v, C, F, material, Jp = jelly_vary_E_nu(E_range=E_range, nu_range=nu_range, particle_density=particle_density)
+        print(f"n_particle = {len(x)}, E = {E.item()}, nu = {nu.item()}, n_iter_per_frame = {n_iter_per_frame}")
 
-    data_dict['x_traj'] = torch.stack(x_traj, dim=0)
-    data_dict['v_traj'] = torch.stack(v_traj, dim=0)
-    data_dict['C_traj'] = torch.stack(C_traj, dim=0)
-    data_dict['F_traj'] = torch.stack(F_traj, dim=0)
+        x_traj = [x.clone()]
+        v_traj = [v.clone()]
+        C_traj = [C.clone()]
+        F_traj = [F.clone()]
 
-    torch.save(data_dict, os.path.join(traj_dir, 'data_dict.pth'))
+        # ~~~~~ Main Loop ~~~~~ #
+        gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+        print()
+        last_time = time.time()
+        frame_cnt = 0
+        while not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT) and frame_cnt < max_frames:
+            for s in range(n_iter_per_frame):
+                x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+            
+            x_traj.append(x.clone())
+            v_traj.append(v.clone())
+            C_traj.append(C.clone())
+            F_traj.append(F.clone())
+            
+            # ~~~~~ Visualize and Save ~~~~~ #
+            colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
+            gui.circles(x.cpu().numpy(), radius=3, color=colors[material.cpu().numpy()])
+            filename = os.path.join(video_dir, f"{frame_cnt:06d}.png")
+            # NOTE: use ffmpeg to convert saved frames to video:
+            #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mp4
+            gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
+            # gui.show()
+
+            frame_cnt += 1
+            if frame_cnt % 10 == 0:
+                delta_time = time.time() - last_time
+                last_time = time.time()
+                print(f"\033[FFPS: {10/delta_time}")
+
+        data_dict = {
+            'x_traj': torch.stack(x_traj, dim=0),
+            'v_traj': torch.stack(v_traj, dim=0),
+            'C_traj': torch.stack(C_traj, dim=0),
+            'F_traj': torch.stack(F_traj, dim=0),
+        }
+
+        torch.save(data_dict, os.path.join(traj_dir, 'data_dict.pth'))
