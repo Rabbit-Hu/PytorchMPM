@@ -34,13 +34,18 @@ class PsiModel2d(nn.Module):
             learn: False: only use guessed E and nu
         '''
         super(PsiModel2d, self).__init__()
-        assert input_type in ['eigen', 'coeff']
-        assert (not correcting) or input_type == 'eigen'
+        assert input_type in ['eigen', 'coeff', 'basis']
+        assert (not correcting) or input_type in ['eigen', 'basis']
         self.input_type = input_type
         self.correcting = correcting
         self.learn = learn
+        
+        if input_type == 'eigen': input_dim = 2
+        elif input_type == 'coeff': input_dim = 2
+        elif input_type == 'basis': input_dim = 6
+
         self.mlp = nn.Sequential(
-            nn.Linear(2, hidden_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             # nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -61,7 +66,7 @@ class PsiModel2d(nn.Module):
         mu = E / (2 * (1 + nu))
         la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
 
-        if self.input_type == 'eigen':
+        if self.input_type in ['eigen', 'basis']:
             # print("delta = ", tr_C**2 - 4 * det_C)
             delta = tr_C**2 - 4 * det_C
             torch.clamp_(delta, min=1e-8)
@@ -69,7 +74,13 @@ class PsiModel2d(nn.Module):
             sigma_1 = 0.5 * (tr_C + delta) # [B]
             sigma_2 = 0.5 * (tr_C - delta) # [B]
             # print(sigma_1, sigma_2)
-            feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
+            # torch.clamp_(sigma_1, min=1e-5)
+            # torch.clamp_(sigma_2, min=1e-5)
+
+            if self.input_type == 'eigen':
+                feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
+            elif self.input_type == 'basis':
+                feat = torch.stack([sigma_1**2, sigma_2**2, torch.log(sigma_1), torch.log(sigma_2), torch.log(sigma_1)**2, torch.log(sigma_2)**2], dim=1)
 
             if self.correcting:
                 Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
@@ -89,7 +100,7 @@ class PsiModel2d(nn.Module):
 
 class MPMModelLearnedPhi(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
-                 p_vol, p_rho, gravity, learn_phi=True):
+                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen'):
         super(MPMModelLearnedPhi, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
         # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
@@ -97,7 +108,7 @@ class MPMModelLearnedPhi(nn.Module):
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
-        self.psi_model = PsiModel2d(input_type='eigen', hidden_dim=16, learn=learn_phi)
+        self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi)
 
     def forward(self, x, v, C, F, material, Jp):
         # mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
@@ -109,6 +120,8 @@ class MPMModelLearnedPhi(nn.Module):
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]  # list of [N, D]
         F = F + self.dt * torch.bmm(C, F)
 
+        # assert((torch.linalg.det(F) >= 0).all()) # * often crashes here...
+
         # * hardening coefficient
         # h = torch.exp(10 * (1. - Jp))
         # h[material == 1] = 0.3 # jelly
@@ -117,11 +130,13 @@ class MPMModelLearnedPhi(nn.Module):
 
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
-        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
-        # F_3x3[:, :2, :2] = F
-        # U, sig, Vh = svd3x3(F_3x3)
-        # Vh = Vh.transpose(-2, -1)
-        # U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        F_3x3[:, :2, :2] = F
+        U, sig, Vh = svd3x3(F_3x3)
+        Vh = Vh.transpose(-2, -1)
+        U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        sig = torch.clamp(sig, min=1e-1)
+        F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
         # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
@@ -216,7 +231,7 @@ def main(args):
     nu_lr = 1e-3
     C_lr = 0
     F_lr = 1e-2
-    Psi_lr = 3e-2
+    Psi_lr = 1e-1
     
     frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
@@ -279,7 +294,7 @@ def main(args):
 
             criterion = nn.MSELoss()
 
-            mpm_model = MPMModelLearnedPhi(*mpm_model_init_params).to(device)
+            mpm_model = MPMModelLearnedPhi(*mpm_model_init_params, psi_model_input_type=args.psi_model_input_type).to(device)
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
@@ -305,7 +320,7 @@ def main(args):
                 n_iter_per_frame = int(data_dict['frame_dt'] / data_dict['dt'])
                 for clip_frame in range(clip_len):
                     for s in range(n_iter_per_frame):
-                        x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp, E, nu)
+                        x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
                     if args.multi_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
                 if not args.multi_frame:
@@ -371,6 +386,7 @@ if __name__ == '__main__':
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
     parser.add_argument('--n_grad_desc_iter', type=int, default=40, help='number of gradient descent iterations')
     parser.add_argument('--multi_frame', action='store_true', help='supervised by all frames of the trajectory if multi_frame==True; otherwise single (ending) frame')
+    parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     args = parser.parse_args()
     print(args)
 
