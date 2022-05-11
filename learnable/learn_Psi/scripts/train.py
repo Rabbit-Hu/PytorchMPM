@@ -54,7 +54,7 @@ def main(args):
     os.makedirs(model_dir, exist_ok=True)
     log_path = os.path.join(log_dir, 'log.txt')
 
-    mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity).to(device)
+    mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type).to(device)
     optimizer = torch.optim.SGD(mpm_model.parameters(), lr=args.Psi_lr)
 
     criterion = nn.MSELoss()
@@ -85,6 +85,9 @@ def main(args):
             log_str = f"iter [{epoch}/{args.n_epoch}] sample[{sample_id}/{len(train_loader)}]: loss={loss.item():.4f}"
             print(log_str)
 
+            for p in mpm_model.psi_model.mlp.parameters():
+                print(p.data)
+
             gui.circles(x_traj[0].detach().cpu().numpy(), radius=1.5, color=0x068587)
             gui.circles(x.detach().cpu().numpy(), radius=1.5, color=0xED553B)
             gui.circles(x_traj[-1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
@@ -108,8 +111,8 @@ if __name__ == '__main__':
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
-    parser.add_argument('--n_grad_desc_iter', type=int, default=40, help='number of gradient descent iterations')
     parser.add_argument('--multi_frame', action='store_true', help='supervised by all frames of the trajectory if multi_frame==True; otherwise single (ending) frame')
+    parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     args = parser.parse_args()
     print(args)
 

@@ -44,17 +44,20 @@ class PsiModel2d(nn.Module):
         elif input_type == 'coeff': input_dim = 2
         elif input_type == 'basis': input_dim = 6
 
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            # nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            # nn.Tanh(),
-            # nn.Linear(hidden_dim, hidden_dim),
-            # nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        if input_type == 'basis':
+            self.mlp = nn.Linear(input_dim, 1) # TODO: delete this
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                # nn.Tanh(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                # nn.Tanh(),
+                # nn.Linear(hidden_dim, hidden_dim),
+                # nn.ReLU(),
+                nn.Linear(hidden_dim, 1),
+            )
     
     def forward(self, F):
         C = torch.bmm(F.transpose(1, 2), F)
@@ -69,13 +72,14 @@ class PsiModel2d(nn.Module):
         if self.input_type in ['eigen', 'basis']:
             # print("delta = ", tr_C**2 - 4 * det_C)
             delta = tr_C**2 - 4 * det_C
-            torch.clamp_(delta, min=1e-8)
+            delta = torch.clamp(delta, min=1e-8)
             delta = torch.sqrt(delta)
             sigma_1 = 0.5 * (tr_C + delta) # [B]
             sigma_2 = 0.5 * (tr_C - delta) # [B]
             # print(sigma_1, sigma_2)
-            # torch.clamp_(sigma_1, min=1e-5)
-            # torch.clamp_(sigma_2, min=1e-5)
+            # print(delta.max().item(), delta.min().item(), sigma_1.max().item(), sigma_1.min().item(), sigma_2.max().item(), sigma_2.min().item())
+            torch.clamp_(sigma_1, min=1e-1)
+            torch.clamp_(sigma_2, min=1e-1)
 
             if self.input_type == 'eigen':
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
@@ -111,6 +115,10 @@ class MPMModelLearnedPhi(nn.Module):
         self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi)
 
     def forward(self, x, v, C, F, material, Jp):
+        assert(not x.isnan().any())
+        assert(not v.isnan().any())
+        assert(not C.isnan().any())
+        assert(not F.isnan().any())
         # mu_0, lambda_0 = E / (2 * (1 + nu)), E * nu / ((1+nu) * (1 - 2 * nu)) # Lame parameters
 
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
@@ -130,15 +138,19 @@ class MPMModelLearnedPhi(nn.Module):
 
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
-        F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
-        F_3x3[:, :2, :2] = F
-        U, sig, Vh = svd3x3(F_3x3)
-        Vh = Vh.transpose(-2, -1)
-        U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
-        sig = torch.clamp(sig, min=1e-1)
-        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
-        sig[too_close, :] += torch.tensor([5e-7, -5e-7], device=sig.device)
-        F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
+        # assert(not F.isnan().any())
+        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        # F_3x3[:, :2, :2] = F
+        # U, sig, Vh = svd3x3(F_3x3)
+        # Vh = Vh.transpose(-2, -1)
+        # U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        # assert(not U.isnan().any())
+        # assert(not sig.isnan().any())
+        # assert(not Vh.isnan().any())
+        # # sig = torch.clamp(sig, min=1e-1, max=10)
+        # # too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
+        # # sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-7, -5e-7], device=sig.device)
+        # F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
         # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
@@ -151,9 +163,11 @@ class MPMModelLearnedPhi(nn.Module):
 
         # * stress
         # stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
+        assert(not F.isnan().any())
         with torch.enable_grad():
             F.requires_grad_()
             Psi = self.psi_model(F)
+            assert(not Psi.isnan().any())
             stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
         assert(not stress.isnan().any())
         stress = torch.bmm(stress, F.transpose(-1, -2))
@@ -217,7 +231,10 @@ class MPMModelLearnedPhi(nn.Module):
         new_C -= new_v.unsqueeze(2) * x.unsqueeze(1)
         new_C *= 4 * self.inv_dx**2
 
-        return x + self.dt * v, new_v, new_C, F, material, Jp
+        new_x = x + self.dt * v
+        new_x = torch.clamp(new_x, min=0.51 * self.dx, max=(self.n_grid - 1.51) * self.dx)
+
+        return new_x, new_v, new_C, F, material, Jp
 
 
 def main(args):
@@ -234,7 +251,8 @@ def main(args):
     nu_lr = 1e-3
     C_lr = 0
     F_lr = 1e-2
-    Psi_lr = 1e-1
+    # Psi_lr = 1e-1
+    Psi_lr = args.Psi_lr
     
     frame_dt = 2e-3
     E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
@@ -334,11 +352,11 @@ def main(args):
 
                 # if loss.item() < 2:
                 #     break
-                if loss.item() < 20 and Psi_lr_decayed > 1e-4:
-                    Psi_lr_decayed *= 0.7
-                    print(f"Psi_lr_decayed = {Psi_lr_decayed}")
-                    for g in optimizer.param_groups:
-                        g['lr'] = Psi_lr_decayed
+                # if loss.item() < 20 and Psi_lr_decayed > 1e-4:
+                #     Psi_lr_decayed *= 0.7
+                #     print(f"Psi_lr_decayed = {Psi_lr_decayed}")
+                #     for g in optimizer.param_groups:
+                #         g['lr'] = Psi_lr_decayed
 
                 # loss.backward(retain_graph=True)
                 loss.backward()
@@ -354,6 +372,9 @@ def main(args):
                         C_start = C_start - C_lr * C_start.grad
                     if args.learn_F:
                         F_start = F_start - F_lr * F_start.grad
+
+                for p in mpm_model.psi_model.mlp.parameters():
+                    print(p.data)
 
                 # print("E.data =", E.data)
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
@@ -384,6 +405,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_name', type=str, default='exp')
+    parser.add_argument('--Psi_lr', type=float, default=3e-2)
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
