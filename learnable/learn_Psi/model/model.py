@@ -136,6 +136,8 @@ class MPMModelLearnedPhi(nn.Module):
         Vh = Vh.transpose(-2, -1)
         U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
         sig = torch.clamp(sig, min=1e-1)
+        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
+        sig[too_close, :] += torch.tensor([5e-7, -5e-7], device=sig.device)
         F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
@@ -153,6 +155,7 @@ class MPMModelLearnedPhi(nn.Module):
             F.requires_grad_()
             Psi = self.psi_model(F)
             stress = torch.autograd.grad(Psi.sum(), F, create_graph=True, allow_unused=True)[0]
+        assert(not stress.isnan().any())
         stress = torch.bmm(stress, F.transpose(-1, -2))
         # print("stress.abs.max =", torch.abs(stress).max())
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
