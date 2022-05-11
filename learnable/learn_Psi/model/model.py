@@ -34,8 +34,8 @@ class PsiModel2d(nn.Module):
             learn: False: only use guessed E and nu
         '''
         super(PsiModel2d, self).__init__()
-        assert input_type in ['eigen', 'coeff', 'basis']
-        assert (not correcting) or input_type in ['eigen', 'basis']
+        assert input_type in ['eigen', 'coeff', 'basis', 'enu']
+        assert (not correcting) or input_type in ['eigen', 'basis', 'enu']
         self.input_type = input_type
         self.correcting = correcting
         self.learn = learn
@@ -43,10 +43,11 @@ class PsiModel2d(nn.Module):
         if input_type == 'eigen': input_dim = 2
         elif input_type == 'coeff': input_dim = 2
         elif input_type == 'basis': input_dim = 6
+        elif input_type == 'enu': input_dim = 2
 
         if input_type == 'basis':
             self.mlp = nn.Linear(input_dim, 1) # TODO: delete this
-        else:
+        elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
                 nn.ReLU(),
@@ -58,18 +59,27 @@ class PsiModel2d(nn.Module):
                 # nn.ReLU(),
                 nn.Linear(hidden_dim, 1),
             )
+        elif input_type == 'enu':
+            self.mlp = nn.Linear(input_dim, 1)
+            E = 1000
+            nu = 0.2
+            mu = E / (2 * (1 + nu))
+            la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
+            with torch.no_grad():
+                self.mlp.weight = torch.nn.Parameter(torch.tensor([[mu, la]], requires_grad=True))
     
     def forward(self, F):
         C = torch.bmm(F.transpose(1, 2), F)
         tr_C = C[:, 0, 0] + C[:, 1, 1] # [B]
         det_C = torch.linalg.det(C) # [B]
         
+        # guessed E and nu
         E = 1000
         nu = 0.2
         mu = E / (2 * (1 + nu))
         la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
 
-        if self.input_type in ['eigen', 'basis']:
+        if self.input_type in ['eigen', 'basis', 'enu']:
             # print("delta = ", tr_C**2 - 4 * det_C)
             delta = tr_C**2 - 4 * det_C
             delta = torch.clamp(delta, min=1e-8)
@@ -85,15 +95,19 @@ class PsiModel2d(nn.Module):
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
             elif self.input_type == 'basis':
                 feat = torch.stack([sigma_1**2, sigma_2**2, torch.log(sigma_1), torch.log(sigma_2), torch.log(sigma_1)**2, torch.log(sigma_2)**2], dim=1)
+            elif self.input_type == 'enu':
+                feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
-            if self.correcting:
+            if self.correcting and self.input_type != 'enu':
                 Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
                 if not self.learn:
                     return Psi_est
-        else:
+        elif self.input_type == 'coeff':
             feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
+        else:
+            raise NotImplementedError
         out = self.mlp(feat).squeeze(-1)
-        if self.correcting:
+        if self.correcting and self.input_type != 'enu':
             # print("out:", out.shape, " Psi:", Psi_est.shape)
             out += Psi_est
             # out = Psi_est
@@ -279,8 +293,10 @@ def main(args):
             log_path = os.path.join(log_dir, 'log.txt')
 
             #* get a random clip
-            clip_start = np.random.randint(traj_len - clip_len)
+            # clip_start = np.random.randint(traj_len - clip_len)
+            clip_start = 13 # TODO: change back
             clip_end = clip_start + clip_len
+            
             with open(log_path, 'a+') as f:
                 log_str = f"traj_name = {traj_name}, clip_start = {clip_start}, clip_end = {clip_end}"
                 f.write(log_str + '\n')
