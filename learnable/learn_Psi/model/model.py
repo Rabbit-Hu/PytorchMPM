@@ -47,19 +47,17 @@ class PsiModel2d(nn.Module):
         elif input_type == 'enu': input_dim = 2
 
         if input_type == 'basis':
-            self.mlp = nn.Linear(input_dim, 1) # TODO: delete this
+            self.mlp = nn.Linear(input_dim, 1)
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                # nn.ReLU(),
                 nn.ELU(),
-                # nn.Tanh(),
                 nn.Linear(hidden_dim, hidden_dim),
-                # nn.ReLU(),
                 nn.ELU(),
-                # nn.Tanh(),
-                # nn.Linear(hidden_dim, hidden_dim),
-                # nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ELU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
         elif input_type == 'enu':
@@ -168,8 +166,8 @@ class MPMModelLearnedPhi(nn.Module):
         assert(not sig.isnan().any())
         assert(not Vh.isnan().any())
         sig = torch.clamp(sig, min=1e-1, max=10)
-        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
-        sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-7, -5e-7], device=sig.device)
+        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-4
+        sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-5, -5e-5], device=sig.device)
         F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
@@ -271,12 +269,7 @@ def main(args):
     nu_lr = 1e-3
     C_lr = 0
     F_lr = 1e-2
-    # Psi_lr = 1e-1
     Psi_lr = args.Psi_lr
-    
-    frame_dt = 2e-3
-    E_range = (5e2, 20e2) # TODO: save E_range and nu_range into data
-    nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
     data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000'
@@ -294,6 +287,8 @@ def main(args):
     nu_range = config_dict['nu_range']
     E_gt = config_dict['E']
     nu_gt = config_dict['nu']
+    E_range = config_dict['E_range']
+    nu_range = config_dict['nu_range']
 
     traj_list = sorted([s for s in os.listdir(data_dir) if 'traj_' in s])
     for traj_name in traj_list:
@@ -424,6 +419,8 @@ def main(args):
                 filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
                 # NOTE: use ffmpeg to convert saved frames to video:
                 #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
+                # Stacking videos:
+                #       ffmpeg -i video_guess.mov  -i video_gt.mov -i video_pred.mov -filter_complex hstack=inputs=3 -vb 20M hstack.mov
                 gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
                 # gui.show()
 
