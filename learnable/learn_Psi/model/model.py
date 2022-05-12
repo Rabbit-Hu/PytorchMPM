@@ -106,7 +106,7 @@ class PsiModel2d(nn.Module):
             if self.input_type == 'eigen':
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
             elif self.input_type == 'basis':
-                feat = torch.stack([sigma_1**2, sigma_2**2, torch.log(sigma_1), torch.log(sigma_2), torch.log(sigma_1)**2, torch.log(sigma_2)**2], dim=1)
+                feat = torch.stack([(sigma_1 - 1)**2, (sigma_2 - 1)**2, torch.log(sigma_1), torch.log(sigma_2), torch.log(sigma_1)**2, torch.log(sigma_2)**2], dim=1)
             elif self.input_type == 'enu':
                 feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
@@ -415,8 +415,9 @@ def main(args):
                     if args.learn_F:
                         F_start = F_start - F_lr * F_start.grad
 
-                # for p in mpm_model.psi_model.mlp.parameters():
-                #     print(p.data)
+                if args.psi_model_input_type == 'basis':
+                    for p in mpm_model.psi_model.mlp.parameters():
+                        print(p.data)
 
                 # print("E.data =", E.data)
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
