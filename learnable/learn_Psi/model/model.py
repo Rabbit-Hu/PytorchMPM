@@ -25,7 +25,7 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -41,6 +41,9 @@ class PsiModel2d(nn.Module):
         self.correcting = correcting
         self.learn = learn
         
+        self.guess_E = guess_E
+        self.guess_nu = guess_nu
+
         if input_type == 'eigen': input_dim = 2
         elif input_type == 'coeff': input_dim = 2
         elif input_type == 'basis': input_dim = 6
@@ -51,19 +54,25 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
+                # nn.LayerNorm([hidden_dim]),
+                nn.BatchNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                # nn.LayerNorm([hidden_dim]),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                # nn.LayerNorm([1]),
                 nn.ELU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ELU(),
+                # nn.Linear(hidden_dim, hidden_dim),
+                # nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
         elif input_type == 'enu':
             self.mlp = nn.Linear(input_dim, 1)
-            E = 1000
-            nu = 0.2
+            E = guess_E
+            nu = guess_nu
             mu = E / (2 * (1 + nu))
             la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
             with torch.no_grad():
@@ -75,8 +84,8 @@ class PsiModel2d(nn.Module):
         det_C = torch.linalg.det(C) # [B]
         
         # guessed E and nu
-        E = 1000
-        nu = 0.2
+        E = self.guess_E
+        nu = self.guess_nu
         mu = E / (2 * (1 + nu))
         la = E * nu / ((1 + nu) * (1 - 2 * nu)) # Lame parameters
 
@@ -85,9 +94,9 @@ class PsiModel2d(nn.Module):
             delta = tr_C**2 - 4 * det_C
             delta = torch.clamp(delta, min=1e-8)
             delta = torch.sqrt(delta)
-            sigma_1 = 0.5 * (tr_C + delta) # [B]
-            sigma_2 = 0.5 * (tr_C - delta) # [B]
-            # print(sigma_1, sigma_2)
+            sigma_1 = torch.sqrt(0.5 * (tr_C + delta)) # [B]
+            sigma_2 = torch.sqrt(0.5 * (tr_C - delta)) # [B]
+            # print(tr_C, det_C, sigma_1, sigma_2)
             # print(delta.max().item(), delta.min().item(), sigma_1.max().item(), sigma_1.min().item(), sigma_2.max().item(), sigma_2.min().item())
             # torch.clamp_(sigma_1, min=1e-1)
             # torch.clamp_(sigma_2, min=1e-1)
@@ -122,7 +131,7 @@ class PsiModel2d(nn.Module):
 
 class MPMModelLearnedPhi(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
-                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen'):
+                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen', guess_E=1000, guess_nu=0.2):
         super(MPMModelLearnedPhi, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
         # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
@@ -130,7 +139,7 @@ class MPMModelLearnedPhi(nn.Module):
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
 
-        self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi)
+        self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi, guess_E=1000, guess_nu=0.2)
 
     def forward(self, x, v, C, F, material, Jp):
         assert(not x.isnan().any())
@@ -348,6 +357,7 @@ def main(args):
             criterion = nn.MSELoss()
 
             mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type).to(device)
+            mpm_model.train()
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
@@ -383,15 +393,12 @@ def main(args):
                     loss /= clip_len
                 # loss = criterion(v, v_end)
 
-                # if loss.item() < 2:
-                #     break
-                # if loss.item() < 50 and Psi_lr_decayed > 1e-3:
-                if loss.item() > last_loss and Psi_lr_decayed > 1e-3:
-                    Psi_lr_decayed *= 0.7
-                    print(f"Psi_lr_decayed = {Psi_lr_decayed}")
-                    for g in optimizer.param_groups:
-                        g['lr'] = Psi_lr_decayed
-                last_loss = loss.item()
+                # if (loss.item() > last_loss or loss.item() < 0.9 * last_loss) and Psi_lr_decayed > 1e-3:
+                #     Psi_lr_decayed *= 0.2
+                #     print(f"Psi_lr_decayed = {Psi_lr_decayed}")
+                #     for g in optimizer.param_groups:
+                #         g['lr'] = Psi_lr_decayed
+                # last_loss = loss.item()
 
                 # loss.backward(retain_graph=True)
                 loss.backward()
@@ -418,9 +425,10 @@ def main(args):
                 gui.circles(x_traj[-1].detach().cpu().numpy(), radius=1.5, color=0xEEEEF0)
                 filename = os.path.join(video_dir, f"{grad_desc_idx:06d}.png")
                 # NOTE: use ffmpeg to convert saved frames to video:
-                #       ffmpeg -framerate 30 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
+                #       ffmpeg -framerate 5 -pattern_type glob -i '*.png' -vcodec mpeg4 -vb 20M out.mov
+                #       ffmpeg -framerate 5 -pattern_type glob -i 'video_all/*.png' -vcodec mpeg4 -acodec aac video_all.mov
                 # Stacking videos:
-                #       ffmpeg -i video_guess.mov  -i video_gt.mov -i video_pred.mov -filter_complex hstack=inputs=3 -vb 20M hstack.mov
+                #       ffmpeg -i video_guess.mov  -i video_gt.mov -i video_pred.mov -filter_complex hstack=inputs=3 -vb 20M hstack.mp4
                 gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
                 # gui.show()
 
