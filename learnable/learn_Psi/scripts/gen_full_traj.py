@@ -85,6 +85,9 @@ def main(args):
     mpm_model_learned_phi.load_state_dict(torch.load(args.model_path))
     mpm_model_guess = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, learn_phi=False, psi_model_input_type=args.psi_model_input_type).to(device)
 
+    mpm_model_learned_phi.eval()
+    mpm_model_guess.eval()
+
     end_frame = args.end_frame if args.end_frame is not None else traj_len
 
     with torch.no_grad():
