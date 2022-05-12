@@ -4,6 +4,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.
 
 import time
 import argparse
+import json
 
 import numpy as np
 import torch
@@ -50,10 +51,12 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                nn.ReLU(),
+                # nn.ReLU(),
+                nn.ELU(),
                 # nn.Tanh(),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
+                # nn.ReLU(),
+                nn.ELU(),
                 # nn.Tanh(),
                 # nn.Linear(hidden_dim, hidden_dim),
                 # nn.ReLU(),
@@ -88,8 +91,10 @@ class PsiModel2d(nn.Module):
             sigma_2 = 0.5 * (tr_C - delta) # [B]
             # print(sigma_1, sigma_2)
             # print(delta.max().item(), delta.min().item(), sigma_1.max().item(), sigma_1.min().item(), sigma_2.max().item(), sigma_2.min().item())
-            torch.clamp_(sigma_1, min=1e-1)
-            torch.clamp_(sigma_2, min=1e-1)
+            # torch.clamp_(sigma_1, min=1e-1)
+            # torch.clamp_(sigma_2, min=1e-1)
+
+            assert(not sigma_1.isnan().any() and not sigma_2.isnan().any())
 
             if self.input_type == 'eigen':
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
@@ -98,8 +103,9 @@ class PsiModel2d(nn.Module):
             elif self.input_type == 'enu':
                 feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
-            if self.correcting and self.input_type != 'enu':
+            if not self.learn or (self.correcting and self.input_type != 'enu'):
                 Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
+                assert(not Psi_est.isnan().any())
                 if not self.learn:
                     return Psi_est
         elif self.input_type == 'coeff':
@@ -151,20 +157,20 @@ class MPMModelLearnedPhi(nn.Module):
         # mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
-        # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
-        # assert(not F.isnan().any())
-        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
-        # F_3x3[:, :2, :2] = F
-        # U, sig, Vh = svd3x3(F_3x3)
-        # Vh = Vh.transpose(-2, -1)
-        # U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
-        # assert(not U.isnan().any())
-        # assert(not sig.isnan().any())
-        # assert(not Vh.isnan().any())
-        # # sig = torch.clamp(sig, min=1e-1, max=10)
-        # # too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
-        # # sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-7, -5e-7], device=sig.device)
-        # F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
+        U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
+        assert(not F.isnan().any())
+        F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        F_3x3[:, :2, :2] = F
+        U, sig, Vh = svd3x3(F_3x3)
+        Vh = Vh.transpose(-2, -1)
+        U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        assert(not U.isnan().any())
+        assert(not sig.isnan().any())
+        assert(not Vh.isnan().any())
+        sig = torch.clamp(sig, min=1e-1, max=10)
+        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-6
+        sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-7, -5e-7], device=sig.device)
+        F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
         # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
@@ -258,7 +264,7 @@ def main(args):
 
     device = torch.device('cuda:0')
 
-    n_clip_per_traj = 5
+    n_clip_per_traj = 1
     clip_len = args.clip_len
     n_grad_desc_iter = args.n_grad_desc_iter
     E_lr = 1e2
@@ -273,16 +279,31 @@ def main(args):
     nu_range = (0.01, 0.4)
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
-    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_E_and_nu/data/jelly'
-    traj_list = sorted(os.listdir(data_dir))
+    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000'
+
+    with open(os.path.join(data_dir, 'config_dict.json'), 'r') as f:
+        config_dict = json.load(f)
+    n_grid = config_dict['n_grid']
+    dx = 1 / n_grid
+    dt = config_dict['dt']
+    frame_dt = config_dict['frame_dt']
+    n_iter_per_frame = int(frame_dt / dt + 0.5)
+    p_vol, p_rho = config_dict['p_vol'], config_dict['p_rho']
+    gravity = config_dict['gravity']
+    E_range = config_dict['E_range']
+    nu_range = config_dict['nu_range']
+    E_gt = config_dict['E']
+    nu_gt = config_dict['nu']
+
+    traj_list = sorted([s for s in os.listdir(data_dir) if 'traj_' in s])
     for traj_name in traj_list:
         
         data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'), map_location="cpu")
         # print(data_dict)
         traj_len = len(data_dict['x_traj'])
-        mpm_model_init_params = data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
-                                data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity']
-        E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
+        # mpm_model_init_params = data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
+        #                         data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity']
+        # E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
             log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', args.exp_name, f'{traj_name}_clip_{clip_idx:04d}')
@@ -294,7 +315,7 @@ def main(args):
 
             #* get a random clip
             # clip_start = np.random.randint(traj_len - clip_len)
-            clip_start = 13 # TODO: change back
+            clip_start = 11 # TODO: change back
             clip_end = clip_start + clip_len
             
             with open(log_path, 'a+') as f:
@@ -331,11 +352,13 @@ def main(args):
 
             criterion = nn.MSELoss()
 
-            mpm_model = MPMModelLearnedPhi(*mpm_model_init_params, psi_model_input_type=args.psi_model_input_type).to(device)
+            mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type).to(device)
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
 
             Psi_lr_decayed = Psi_lr
+
+            last_loss = 1e18
 
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
@@ -354,7 +377,6 @@ def main(args):
 
                 loss = 0
                 x_scale = 1e3
-                n_iter_per_frame = int(data_dict['frame_dt'] / data_dict['dt'])
                 for clip_frame in range(clip_len):
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
@@ -368,11 +390,13 @@ def main(args):
 
                 # if loss.item() < 2:
                 #     break
-                # if loss.item() < 20 and Psi_lr_decayed > 1e-4:
-                #     Psi_lr_decayed *= 0.7
-                #     print(f"Psi_lr_decayed = {Psi_lr_decayed}")
-                #     for g in optimizer.param_groups:
-                #         g['lr'] = Psi_lr_decayed
+                # if loss.item() < 50 and Psi_lr_decayed > 1e-3:
+                if loss.item() > last_loss and Psi_lr_decayed > 1e-3:
+                    Psi_lr_decayed *= 0.7
+                    print(f"Psi_lr_decayed = {Psi_lr_decayed}")
+                    for g in optimizer.param_groups:
+                        g['lr'] = Psi_lr_decayed
+                last_loss = loss.item()
 
                 # loss.backward(retain_graph=True)
                 loss.backward()
@@ -389,8 +413,8 @@ def main(args):
                     if args.learn_F:
                         F_start = F_start - F_lr * F_start.grad
 
-                for p in mpm_model.psi_model.mlp.parameters():
-                    print(p.data)
+                # for p in mpm_model.psi_model.mlp.parameters():
+                #     print(p.data)
 
                 # print("E.data =", E.data)
                 # colors = np.array([0x068587, 0xED553B, 0xEEEEF0], dtype=np.uint32)
@@ -404,7 +428,7 @@ def main(args):
                 # gui.show()
 
                 with open(log_path, 'a+') as f:
-                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt.item():.2f}; nu={nu.item():.4f}, nu_gt={nu_gt.item():.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
+                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
                     # if args.learn_C:
                     #     log_str += f"\nC_start[:-2] = {C_start[:-2]}, C_start_gt[:-2] = {C_start_gt[:-2]}"
                     # if args.learn_F:
