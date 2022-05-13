@@ -46,7 +46,7 @@ class PsiModel2d(nn.Module):
 
         if input_type == 'eigen': input_dim = 2
         elif input_type == 'coeff': input_dim = 2
-        elif input_type == 'basis': input_dim = 6
+        elif input_type == 'basis': input_dim =4
         elif input_type == 'enu': input_dim = 2
 
         if input_type == 'basis':
@@ -96,6 +96,8 @@ class PsiModel2d(nn.Module):
             delta = torch.sqrt(delta)
             sigma_1 = torch.sqrt(0.5 * (tr_C + delta)) # [B]
             sigma_2 = torch.sqrt(0.5 * (tr_C - delta)) # [B]
+            # print("in:", sigma_1[:5], sigma_2[:5])
+            assert((torch.abs(sigma_1 - sigma_2) > 5e-5).all())
             # print(tr_C, det_C, sigma_1, sigma_2)
             # print(delta.max().item(), delta.min().item(), sigma_1.max().item(), sigma_1.min().item(), sigma_2.max().item(), sigma_2.min().item())
             # torch.clamp_(sigma_1, min=1e-1)
@@ -106,7 +108,7 @@ class PsiModel2d(nn.Module):
             if self.input_type == 'eigen':
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
             elif self.input_type == 'basis':
-                feat = torch.stack([(sigma_1 - 1)**2, (sigma_2 - 1)**2, torch.log(sigma_1), torch.log(sigma_2), torch.log(sigma_1)**2, torch.log(sigma_2)**2], dim=1)
+                feat = torch.stack([(sigma_1 - 1)**2 + (sigma_2 - 1)**2, sigma_1 + sigma_2, torch.log(sigma_1) + torch.log(sigma_2), torch.log(sigma_1)**2 + torch.log(sigma_2)**2], dim=1)
             elif self.input_type == 'enu':
                 feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
@@ -175,8 +177,10 @@ class MPMModelLearnedPhi(nn.Module):
         assert(not sig.isnan().any())
         assert(not Vh.isnan().any())
         sig = torch.clamp(sig, min=1e-1, max=10)
-        too_close = torch.abs(sig[:, 0] - sig[:, 1]) < 1e-4
-        sig[too_close, :] = sig[too_close, :] + torch.tensor([5e-5, -5e-5], device=sig.device)
+        too_close = sig[:, 0] - sig[:, 1] < 1e-2
+        sig[too_close, :] = sig[too_close, :] + torch.tensor([[5e-3, -5e-3]], device=sig.device)
+        assert((sig[:, 0] - sig[:, 1] > 5e-3).all())
+        # print("out:", sig[:5, 0], sig[:5, 1])
         F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
@@ -360,6 +364,7 @@ def main(args):
             mpm_model.train()
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=5, min_lr=1e-3)
 
             Psi_lr_decayed = Psi_lr
 
@@ -399,6 +404,7 @@ def main(args):
                 #     for g in optimizer.param_groups:
                 #         g['lr'] = Psi_lr_decayed
                 # last_loss = loss.item()
+                scheduler.step(loss.item())
 
                 # loss.backward(retain_graph=True)
                 loss.backward()
@@ -434,7 +440,7 @@ def main(args):
                 # gui.show()
 
                 with open(log_path, 'a+') as f:
-                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
+                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: lr={optimizer.param_groups[0]['lr']:.0e}, loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
                     # if args.learn_C:
                     #     log_str += f"\nC_start[:-2] = {C_start[:-2]}, C_start_gt[:-2] = {C_start_gt[:-2]}"
                     # if args.learn_F:
