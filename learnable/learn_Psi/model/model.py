@@ -54,19 +54,14 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                # nn.LayerNorm([hidden_dim]),
-                nn.BatchNorm1d(hidden_dim),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                # nn.LayerNorm([hidden_dim]),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                # nn.LayerNorm([1]),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
-                # nn.Linear(hidden_dim, hidden_dim),
-                # nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
         elif input_type == 'enu':
