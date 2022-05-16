@@ -161,22 +161,22 @@ class MPMModelLearnedPhi(nn.Module):
         # mu[material == 0] = 0.0 # liquid
 
         # * compute determinant J
-        U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
-        assert(not F.isnan().any())
-        F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
-        F_3x3[:, :2, :2] = F
-        U, sig, Vh = svd3x3(F_3x3)
-        Vh = Vh.transpose(-2, -1)
-        U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
-        assert(not U.isnan().any())
-        assert(not sig.isnan().any())
-        assert(not Vh.isnan().any())
-        sig = torch.clamp(sig, min=1e-1, max=10)
-        too_close = sig[:, 0] - sig[:, 1] < 1e-2
-        sig[too_close, :] = sig[too_close, :] + torch.tensor([[5e-3, -5e-3]], device=sig.device)
-        assert((sig[:, 0] - sig[:, 1] > 5e-3).all())
-        # print("out:", sig[:5, 0], sig[:5, 1])
-        F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
+        # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
+        # assert(not F.isnan().any())
+        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        # F_3x3[:, :2, :2] = F
+        # U, sig, Vh = svd3x3(F_3x3)
+        # Vh = Vh.transpose(-2, -1)
+        # U, sig, Vh = U[:, :2, :2], sig[:, :2], Vh[:, :2, :2]
+        # assert(not U.isnan().any())
+        # assert(not sig.isnan().any())
+        # assert(not Vh.isnan().any())
+        # sig = torch.clamp(sig, min=1e-1, max=10)
+        # too_close = sig[:, 0] - sig[:, 1] < 1e-2
+        # sig[too_close, :] = sig[too_close, :] + torch.tensor([[5e-3, -5e-3]], device=sig.device)
+        # assert((sig[:, 0] - sig[:, 1] > 5e-3).all())
+        # # print("out:", sig[:5, 0], sig[:5, 1])
+        # F = torch.bmm(U, torch.bmm(torch.diag_embed(sig), Vh))
 
         # snow_sig = sig[material == 2]
         # clamped_sig = torch.clamp(snow_sig, 1 - 2.5e-2, 1 + 4.5e-3) # snow
@@ -385,9 +385,9 @@ def main(args):
                 for clip_frame in range(clip_len):
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-                    if args.multi_frame:
+                    if not args.single_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
-                if not args.multi_frame:
+                if not args.single_frame:
                     loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
                 else:
                     loss /= clip_len
@@ -457,7 +457,7 @@ if __name__ == '__main__':
     parser.add_argument('--learn_C', action='store_true')
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
     parser.add_argument('--n_grad_desc_iter', type=int, default=40, help='number of gradient descent iterations')
-    parser.add_argument('--multi_frame', action='store_true', help='supervised by all frames of the trajectory if multi_frame==True; otherwise single (ending) frame')
+    parser.add_argument('--single_frame', action='store_true', help='supervised by the single (ending) frame of the trajectory if single_frame==True; otherwise supervised by all the frames')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     args = parser.parse_args()
     print(args)
