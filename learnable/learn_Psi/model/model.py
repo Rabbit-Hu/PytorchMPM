@@ -6,6 +6,7 @@ import time
 import argparse
 import json
 import copy
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -398,6 +399,17 @@ def main(args):
                 if args.learn_C: C_start.requires_grad_()
                 if args.learn_F: F_start.requires_grad_()
 
+                with torch.no_grad():
+                # if True:
+                    if args.force_convex:
+                        first = True
+                        for layer in mpm_model.psi_model.mlp:
+                            if isinstance(layer, nn.Linear):
+                                if first:
+                                    first = False
+                                    continue
+                                layer.weight = torch.nn.Parameter(torch.abs(layer.weight))
+
                 optimizer.zero_grad()
                 
                 x, v, C, F = x_start, v_start, C_start, F_start
@@ -427,71 +439,61 @@ def main(args):
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
                 # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
 
-                #~ save torch grad 
-                torch_grads = []
-                for i, layer in enumerate(mpm_model.psi_model.mlp):
-                    if isinstance(layer, nn.Linear):
-                        torch_grads.append(layer.weight.grad.view(-1))
-                        if i != len(mpm_model.psi_model.mlp) - 1: # the bias of the last layer has none grad
-                            torch_grads.append(layer.bias.grad.view(-1))
-                print([g.shape for g in torch_grads])
-
-                eps_norm = 1e-3
-                eps = torch.randn(sum([len(g) for g in torch_grads]), device=device)
-                eps *= eps_norm / torch.linalg.norm(eps)
-                # print(eps)
-                
-                model_copy = copy.deepcopy(mpm_model)
-                with torch.no_grad():
-                    cur = 0
-                    for i, layer in enumerate(model_copy.psi_model.mlp):
+                if args.compare_grads:
+                    #~ save torch grad 
+                    torch_grads = []
+                    for i, layer in enumerate(mpm_model.psi_model.mlp):
                         if isinstance(layer, nn.Linear):
-                            w_shape = layer.weight.shape
-                            w_size = np.prod(w_shape)
-                            layer.weight += eps[cur: cur + w_size].view(*w_shape)
-                            cur += w_size
+                            torch_grads.append(layer.weight.grad.view(-1))
                             if i != len(mpm_model.psi_model.mlp) - 1: # the bias of the last layer has none grad
-                                b_shape = layer.bias.shape
-                                b_size = np.prod(b_shape)
-                                layer.bias += eps[cur: cur + b_size].view(*b_shape)
-                                cur += b_size
+                                torch_grads.append(layer.bias.grad.view(-1))
+                    # print([g.shape for g in torch_grads])
+
+                    eps_norm = 1e-1
+                    eps_len = sum([len(g) for g in torch_grads])
+                    diff_grads = torch.zeros(eps_len, device=device)
+
+                    for eps_pos in range(eps_len):
+                        eps = torch.zeros(eps_len, device=device)
+                        eps[eps_pos] = eps_norm      
+                        
+                        model_copy = copy.deepcopy(mpm_model)
+                        with torch.no_grad():
+                            cur = 0
+                            for i, layer in enumerate(model_copy.psi_model.mlp):
+                                if isinstance(layer, nn.Linear):
+                                    w_shape = layer.weight.shape
+                                    w_size = np.prod(w_shape)
+                                    layer.weight += eps[cur: cur + w_size].view(*w_shape)
+                                    cur += w_size
+                                    if i != len(mpm_model.psi_model.mlp) - 1: # the bias of the last layer has none grad
+                                        b_shape = layer.bias.shape
+                                        b_size = np.prod(b_shape)
+                                        layer.bias += eps[cur: cur + b_size].view(*b_shape)
+                                        cur += b_size
+                            
+                            x, v, C, F = x_start, v_start, C_start, F_start
+                            new_loss = 0
+                            x_scale = 1e3
+                            for clip_frame in range(clip_len):
+                                for s in range(n_iter_per_frame):
+                                    x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
+                                if not args.single_frame:
+                                    new_loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
+                            if args.single_frame:
+                                new_loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
+                            else:
+                                new_loss /= clip_len
                     
-                    x, v, C, F = x_start, v_start, C_start, F_start
-                    new_loss = 0
-                    x_scale = 1e3
-                    for clip_frame in range(clip_len):
-                        for s in range(n_iter_per_frame):
-                            x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-                        if not args.single_frame:
-                            new_loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
-                    if args.single_frame:
-                        new_loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
-                    else:
-                        new_loss /= clip_len
-                    
+                        diff_grads[eps_pos] = (new_loss.item() - loss.item()) / eps_norm
+
+                        print(f"diff_grads[{eps_pos}] = {diff_grads[eps_pos]}, torch_grads[{eps_pos}] = {torch.cat(torch_grads)[eps_pos]}")
                     
 
                 optimizer.step()
                 scheduler.step(loss.item())
 
                 losses.append(loss.item())
-
-                with torch.no_grad():
-                # if True:
-                    if args.force_convex:
-                        first = True
-                        for layer in mpm_model.psi_model.mlp:
-                            if isinstance(layer, nn.Linear):
-                                if first:
-                                    first = False
-                                    continue
-                                layer.weight = torch.nn.Parameter(torch.abs(layer.weight))
-                                # print(layer.weight.data)
-                                # print(layer.weight.grad)
-                                # for name, data in layer.named_parameters():
-                                #     if 'weight' in name:
-                                #         # print(name, data.shape)
-                                #         data.clamp_(min=0.)
 
                 with torch.no_grad():
                     # E = E - E_lr * E.grad
@@ -555,6 +557,7 @@ if __name__ == '__main__':
     parser.add_argument('--base_model', type=str, default='fixed_corotated', choices=['neo_hookean', 'fixed_corotated'])
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])
     parser.add_argument('--force_convex', action='store_true')
+    parser.add_argument('--compare_grads', action='store_true')
     args = parser.parse_args()
     print(args)
 
