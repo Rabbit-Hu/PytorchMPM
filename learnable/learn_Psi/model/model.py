@@ -326,6 +326,7 @@ def main(args):
             os.makedirs(video_dir, exist_ok=True)
             os.makedirs(model_dir, exist_ok=True)
             log_path = os.path.join(log_dir, 'log.txt')
+            curve_path = os.path.join(log_dir, 'training_curve.png')
 
             #* get a random clip
             # clip_start = np.random.randint(traj_len - clip_len)
@@ -379,6 +380,8 @@ def main(args):
 
             last_loss = 1e18
 
+            losses = []
+
             for grad_desc_idx in range(n_grad_desc_iter):
                 if E.grad is not None: E.grad.zero_()
                 if nu.grad is not None: nu.grad.zero_()
@@ -413,7 +416,6 @@ def main(args):
                 #     for g in optimizer.param_groups:
                 #         g['lr'] = Psi_lr_decayed
                 # last_loss = loss.item()
-                scheduler.step(loss.item())
 
                 # loss.backward(retain_graph=True)
                 loss.backward()
@@ -421,6 +423,9 @@ def main(args):
                 # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
 
                 optimizer.step()
+                scheduler.step(loss.item())
+
+                losses.append(loss.item())
 
                 # with torch.no_grad():
                 if True:
@@ -466,6 +471,11 @@ def main(args):
                 #       ffmpeg -i video_guess.mov  -i video_gt.mov -i video_pred.mov -filter_complex hstack=inputs=3 -vb 20M hstack.mp4
                 gui.show(filename) # Change to gui.show(f'{frame:06d}.png') to write images to disk
                 # gui.show()
+
+                fig, ax = plt.subplots()
+                ax.plot(np.arange(len(losses)), np.array(losses))
+                fig.savefig(curve_path)
+                plt.close(fig)
 
                 with open(log_path, 'a+') as f:
                     log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: lr={optimizer.param_groups[0]['lr']:.0e}, loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
