@@ -25,7 +25,7 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -37,9 +37,11 @@ class PsiModel2d(nn.Module):
         super(PsiModel2d, self).__init__()
         assert input_type in ['eigen', 'coeff', 'basis', 'enu']
         assert (not correcting) or input_type in ['eigen', 'basis', 'enu']
+        assert (not correcting) or base_model in ['neo_hookean', 'fixed_corotated']
         self.input_type = input_type
         self.correcting = correcting
         self.learn = learn
+        self.base_model = base_model
         
         self.guess_E = guess_E
         self.guess_nu = guess_nu
@@ -54,13 +56,13 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
@@ -92,7 +94,7 @@ class PsiModel2d(nn.Module):
             sigma_1 = torch.sqrt(0.5 * (tr_C + delta)) # [B]
             sigma_2 = torch.sqrt(0.5 * (tr_C - delta)) # [B]
             # print("in:", sigma_1[:5], sigma_2[:5])
-            assert((torch.abs(sigma_1 - sigma_2) > 5e-5).all())
+            # assert((torch.abs(sigma_1 - sigma_2) > 5e-5).all())
             # print(tr_C, det_C, sigma_1, sigma_2)
             # print(delta.max().item(), delta.min().item(), sigma_1.max().item(), sigma_1.min().item(), sigma_2.max().item(), sigma_2.min().item())
             # torch.clamp_(sigma_1, min=1e-1)
@@ -108,8 +110,13 @@ class PsiModel2d(nn.Module):
                 feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
             if not self.learn or (self.correcting and self.input_type != 'enu'):
-                Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
-                assert(not Psi_est.isnan().any())
+                if self.base_model == 'fixed_corotated':
+                    Psi_est = mu * ((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2) + la / 2 * (sigma_1 * sigma_2 - 1) ** 2
+                    assert(not Psi_est.isnan().any())
+                elif self.base_model == 'neo_hookean':
+                    J = sigma_1 * sigma_2
+                    Psi_est = mu/2 * (sigma_1**2 + sigma_2**2 - 2) - mu * torch.log(J) + la/2 * torch.log(J)**2
+                    assert(not Psi_est.isnan().any())
                 if not self.learn:
                     return Psi_est
         elif self.input_type == 'coeff':
@@ -128,13 +135,15 @@ class PsiModel2d(nn.Module):
 
 class MPMModelLearnedPhi(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
-                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen', guess_E=1000, guess_nu=0.2):
+                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen', guess_E=1000, guess_nu=0.2,\
+                 base_model='fixed_corotated'):
         super(MPMModelLearnedPhi, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
         # self.E, self.nu, self.mu_0, self.lambda_0 = E, nu, mu_0, lambda_0
         self.n_dim, self.n_grid, self.dx, self.dt, self.p_vol, self.p_rho, self.gravity = n_dim, n_grid, dx, dt, p_vol, p_rho, gravity
         self.inv_dx = float(n_grid)
         self.p_mass = p_vol * p_rho
+        self.base_model = base_model
 
         self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi, guess_E=1000, guess_nu=0.2)
 
@@ -162,7 +171,7 @@ class MPMModelLearnedPhi(nn.Module):
 
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
-        # assert(not F.isnan().any())
+        assert(not F.isnan().any())
         # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
         # F_3x3[:, :2, :2] = F
         # U, sig, Vh = svd3x3(F_3x3)
@@ -264,6 +273,8 @@ class MPMModelLearnedPhi(nn.Module):
 
 
 def main(args):
+    import matplotlib.pyplot as plt
+
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.cpu)
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
@@ -355,11 +366,14 @@ def main(args):
 
             criterion = nn.MSELoss()
 
-            mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type).to(device)
+            mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, base_model=args.base_model).to(device)
             mpm_model.train()
             # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
-            optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=5, min_lr=1e-3)
+            if args.optimizer == 'SGD':
+                optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
+            elif args.optimizer == 'Adam':
+                optimizer = torch.optim.Adam(mpm_model.parameters(), lr=Psi_lr)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=300, min_lr=1e-3)
 
             Psi_lr_decayed = Psi_lr
 
@@ -387,7 +401,7 @@ def main(args):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
                     if not args.single_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
-                if not args.single_frame:
+                if args.single_frame:
                     loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
                 else:
                     loss /= clip_len
@@ -405,7 +419,26 @@ def main(args):
                 loss.backward()
                 # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
                 # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
+
                 optimizer.step()
+
+                # with torch.no_grad():
+                if True:
+                    if args.force_convex:
+                        first = True
+                        for layer in mpm_model.psi_model.mlp:
+                            if isinstance(layer, nn.Linear):
+                                if first:
+                                    first = False
+                                    continue
+                                layer.weight = torch.nn.Parameter(torch.abs(layer.weight))
+                                # print(layer.weight.data)
+                                # print(layer.weight.grad)
+                                # for name, data in layer.named_parameters():
+                                #     if 'weight' in name:
+                                #         # print(name, data.shape)
+                                #         data.clamp_(min=0.)
+
                 with torch.no_grad():
                     # E = E - E_lr * E.grad
                     # torch.clamp_(E, min=E_range[0], max=E_range[1])
@@ -443,8 +476,8 @@ def main(args):
                     print(log_str)
                     f.write(log_str + '\n')
                 
-                if (grad_desc_idx + 1) % 10 == 0:
-                    torch.save(mpm_model.state_dict(), os.path.join(model_dir, f'checkpoint_{grad_desc_idx:04d}_loss_{loss.item():.2f}.pth'))
+                if (grad_desc_idx + 1) % args.save_interval == 0:
+                    torch.save(mpm_model.state_dict(), os.path.join(model_dir, f'checkpoint_{grad_desc_idx:04d}.pth'))
 
 
 if __name__ == '__main__':
@@ -456,9 +489,13 @@ if __name__ == '__main__':
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
     parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
-    parser.add_argument('--n_grad_desc_iter', type=int, default=40, help='number of gradient descent iterations')
+    parser.add_argument('--n_grad_desc_iter', type=int, default=500, help='number of gradient descent iterations')
     parser.add_argument('--single_frame', action='store_true', help='supervised by the single (ending) frame of the trajectory if single_frame==True; otherwise supervised by all the frames')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
+    parser.add_argument('--save_interval', type=int, default=1)
+    parser.add_argument('--base_model', type=str, default='fixed_corotated', choices=['neo_hookean', 'fixed_corotated'])
+    parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])
+    parser.add_argument('--force_convex', action='store_true')
     args = parser.parse_args()
     print(args)
 
