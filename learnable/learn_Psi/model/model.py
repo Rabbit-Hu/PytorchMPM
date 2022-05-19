@@ -27,7 +27,7 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=128, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -50,7 +50,7 @@ class PsiModel2d(nn.Module):
 
         if input_type == 'eigen': input_dim = 2
         elif input_type == 'coeff': input_dim = 2
-        elif input_type == 'basis': input_dim =4
+        elif input_type == 'basis': input_dim = 4
         elif input_type == 'enu': input_dim = 2
 
         if input_type == 'basis':
@@ -58,17 +58,17 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
                 nn.Linear(hidden_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
+                nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
-                nn.Linear(hidden_dim, hidden_dim),
+                # nn.Linear(hidden_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
-                nn.ELU(),
+                # nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
         elif input_type == 'enu':
