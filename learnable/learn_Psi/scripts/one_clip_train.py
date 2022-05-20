@@ -13,9 +13,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# from model.model import MPMModelLearnedPhi
-from model.model_loop import MPMModelLearnedPhi
-
 import random
 random.seed(20010313)
 np.random.seed(20010313)
@@ -29,6 +26,11 @@ def main(args):
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.cpu)
     gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+
+    if args.use_loop:
+        from model.model_loop import MPMModelLearnedPhi
+    else:
+        from model.model import MPMModelLearnedPhi
 
     device = torch.device('cpu') if args.cpu else torch.device('cuda:0') 
 
@@ -49,6 +51,7 @@ def main(args):
     n_grid = config_dict['n_grid']
     dx = 1 / n_grid
     dt = config_dict['dt']
+    # dt = dt / 2 # TODO: change back
     frame_dt = config_dict['frame_dt']
     n_iter_per_frame = int(frame_dt / dt + 0.5)
     p_vol, p_rho = config_dict['p_vol'], config_dict['p_rho']
@@ -165,6 +168,7 @@ def main(args):
                 for clip_frame in range(clip_len):
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
+                        print(f"C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     if not args.single_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
                 if args.single_frame:
@@ -305,6 +309,7 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])
     parser.add_argument('--force_convex', action='store_true')
     parser.add_argument('--compare_grads', action='store_true')
+    parser.add_argument('--use_loop', action='store_true')
     args = parser.parse_args()
     print(args)
 
