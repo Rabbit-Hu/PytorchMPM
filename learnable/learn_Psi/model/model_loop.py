@@ -11,17 +11,18 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import torch.nn as nn
-from functional import avg_voxelize, mpm_p2g, mpm_g2p
+# from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 # from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
-from pytorch_svd3x3 import svd3x3
+# from pytorch_svd3x3 import svd3x3
 
 import random
-random.seed(20010313)
-np.random.seed(20010313)
-torch.manual_seed(20010313)
-torch.cuda.manual_seed(20010313)
+seed = 20010313
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed(seed)
 
 torch.use_deterministic_algorithms(True)
 
@@ -83,9 +84,18 @@ class PsiModel2d(nn.Module):
                 self.mlp.weight = torch.nn.Parameter(torch.tensor([[mu, la]], requires_grad=True))
     
     def forward(self, F):
+        assert(not F.isnan().any())
         C = torch.bmm(F.transpose(1, 2), F)
+        assert(not C.isnan().any())
         tr_C = C[:, 0, 0] + C[:, 1, 1] # [B]
+        assert(not tr_C.isnan().any())
         det_C = torch.linalg.det(C) # [B]
+        if det_C.isnan().any():
+            for i in range(len(det_C)):
+                if det_C[i].isnan().any():
+                    print(C[i])
+                    print(F[i])
+        assert(not det_C.isnan().any())
         
         # guessed E and nu
         E = self.guess_E
