@@ -23,14 +23,14 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
-
+# 
 torch.use_deterministic_algorithms(True)
 
 class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=128, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -61,19 +61,22 @@ class PsiModel2d(nn.Module):
         elif input_type in ['eigen', 'coeff']:
             self.mlp = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
-                nn.ELU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.InstanceNorm1d(hidden_dim),
-                nn.ELU(),
+                # nn.Linear(hidden_dim, hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
+                # nn.ELU(),
+                # nn.Linear(hidden_dim, hidden_dim),
+                # nn.InstanceNorm1d(hidden_dim),
+                # nn.ELU(),
                 # nn.Linear(hidden_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
                 # nn.ELU(),
                 nn.Linear(hidden_dim, 1),
             )
+            # self.mlp = nn.Sequential(
+            #     nn.Linear(input_dim, 1),
+            # )
         elif input_type == 'enu':
             self.mlp = nn.Linear(input_dim, 1)
             E = guess_E
@@ -224,6 +227,9 @@ class MPMModelLearnedPhi(nn.Module):
         stress = torch.bmm(stress, F.transpose(-1, -2))
         # print("stress.abs.max =", torch.abs(stress).max())
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
+
+        print(f"stress_max={torch.abs(stress).max()}, ", end='')
+
         affine = stress + self.p_mass * C # [N, D, D]
 
         #~~~~~~~~~~~ Particle to grid (P2G) ~~~~~~~~~~~#
@@ -259,8 +265,13 @@ class MPMModelLearnedPhi(nn.Module):
         grid_v += torch.matmul(grid_affine, grid_x.unsqueeze(3)).squeeze(-1) # [G, G, D]
 
         #~~~~~~~~~~~ Grid update ~~~~~~~~~~~#
-        non_empty_mask = grid_m > 0
+        print(f"grid_v_max before {torch.abs(grid_v).max()}, ", end='')
+
+        EPS = 1e-8
+        non_empty_mask = grid_m > EPS
         grid_v[non_empty_mask] /= grid_m[non_empty_mask].unsqueeze(1) # momentum to velocity
+        grid_v[grid_m <= EPS] = 0 #^ loop 2
+
         grid_v[:, :, 1] -= self.dt * self.gravity # gravity
 
         # set velocity near boundary to 0
@@ -268,6 +279,8 @@ class MPMModelLearnedPhi(nn.Module):
         torch.clamp_(grid_v[-3:, :, 0], max=0)
         torch.clamp_(grid_v[:, :3, 1], min=0)
         torch.clamp_(grid_v[:, -3:, 1], max=0)
+
+        print(f"after {torch.abs(grid_v).max()}")
 
         #~~~~~~~~~~~ Grid to particle (G2P) ~~~~~~~~~~~#
         

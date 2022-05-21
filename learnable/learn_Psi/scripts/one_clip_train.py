@@ -18,7 +18,7 @@ random.seed(20010313)
 np.random.seed(20010313)
 torch.manual_seed(20010313)
 torch.cuda.manual_seed(20010313)
-
+# 
 
 def main(args):
     import matplotlib.pyplot as plt
@@ -120,7 +120,8 @@ def main(args):
             else:
                 F_start = F_start_gt
 
-            criterion = nn.MSELoss()
+            # criterion = nn.MSELoss()
+            criterion = nn.L1Loss()
 
             mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, base_model=args.base_model).to(device)
             mpm_model.train()
@@ -161,14 +162,15 @@ def main(args):
 
                 optimizer.zero_grad()
                 
-                x, v, C, F = x_start, v_start, C_start, F_start
+                x, v, C, F = x_start.clone(), v_start.clone(), C_start.clone(), F_start.clone()
 
                 loss = 0
                 x_scale = 1e3
                 for clip_frame in range(clip_len):
+                    print(f"     C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-                        print(f"C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
+                        print(f"s={s:02d} C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     if not args.single_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
                 if args.single_frame:
@@ -240,6 +242,9 @@ def main(args):
                         print(f"diff_grads[{eps_pos}] = {diff_grads[eps_pos]}, torch_grads[{eps_pos}] = {torch.cat(torch_grads)[eps_pos]}")
                     
 
+                #~~~ clip grad ~~~#
+                torch.nn.utils.clip_grad_norm_(mpm_model.parameters(), args.clip_grad)
+
                 optimizer.step()
                 scheduler.step(loss.item())
 
@@ -310,6 +315,7 @@ if __name__ == '__main__':
     parser.add_argument('--force_convex', action='store_true')
     parser.add_argument('--compare_grads', action='store_true')
     parser.add_argument('--use_loop', action='store_true')
+    parser.add_argument('--clip_grad', type=float, default=float('inf'))
     args = parser.parse_args()
     print(args)
 
