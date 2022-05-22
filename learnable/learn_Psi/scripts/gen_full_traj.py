@@ -17,6 +17,7 @@ from functional import avg_voxelize, mpm_p2g, mpm_g2p
 from pytorch_svd3x3 import svd3x3
 
 from model.model import MPMModelLearnedPhi
+from model.model_loop import MPMModelLearnedPhi
 
 import random
 random.seed(20010313)
@@ -115,10 +116,10 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp_name', type=str, default='exp')
-    parser.add_argument('--traj_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000/traj_0001')
+    parser.add_argument('--traj_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000/traj_0010')
     parser.add_argument('--start_frame', type=int, default=1)
     parser.add_argument('--end_frame', type=int, default=None)
-    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/exp/traj_0000_clip_0000/model/checkpoint_0079_loss_6.48.pth')
+    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_2layer_clip_cos/traj_0000_clip_0000/model/checkpoint_0407.pth')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     args = parser.parse_args()
     print(args)

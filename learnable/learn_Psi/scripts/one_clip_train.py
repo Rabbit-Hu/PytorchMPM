@@ -131,7 +131,8 @@ def main(args):
             elif args.optimizer == 'Adam':
                 optimizer = torch.optim.Adam(mpm_model.parameters(), lr=Psi_lr)
             # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.33, patience=20, min_lr=1e-4)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100)
 
             Psi_lr_decayed = Psi_lr
 
