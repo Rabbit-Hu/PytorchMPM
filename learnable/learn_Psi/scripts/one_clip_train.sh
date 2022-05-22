@@ -1,0 +1,1 @@
+CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_2layer_clip_cos --use_loop --optimizer Adam --Psi_lr 3e-2 --clip_grad 5e-5
