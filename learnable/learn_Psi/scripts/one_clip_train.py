@@ -130,7 +130,8 @@ def main(args):
                 optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
             elif args.optimizer == 'Adam':
                 optimizer = torch.optim.Adam(mpm_model.parameters(), lr=Psi_lr)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=300, min_lr=1e-3)
+            # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.33, patience=20, min_lr=1e-4)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
 
             Psi_lr_decayed = Psi_lr
 
@@ -165,12 +166,12 @@ def main(args):
                 x, v, C, F = x_start.clone(), v_start.clone(), C_start.clone(), F_start.clone()
 
                 loss = 0
-                x_scale = 1e3
+                x_scale = 1
                 for clip_frame in range(clip_len):
-                    print(f"     C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
+                    # print(f"     C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
-                        print(f"s={s:02d} C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
+                        # print(f"s={s:02d} C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     if not args.single_frame:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
                 if args.single_frame:
@@ -246,7 +247,8 @@ def main(args):
                 torch.nn.utils.clip_grad_norm_(mpm_model.parameters(), args.clip_grad)
 
                 optimizer.step()
-                scheduler.step(loss.item())
+                # scheduler.step(loss.item())
+                scheduler.step()
 
                 losses.append(loss.item())
 
@@ -284,7 +286,9 @@ def main(args):
                 plt.close(fig)
 
                 with open(log_path, 'a+') as f:
-                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: lr={optimizer.param_groups[0]['lr']:.0e}, loss={loss.item():.4f}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
+                    log_str = f"iter [{grad_desc_idx}/{n_grad_desc_iter}]: "
+                    log_str += f"lr={scheduler.get_last_lr()[0]:.1e}, "
+                    log_str += f"loss={loss.item():.3e}, E={E.item():.2f}, E_gt={E_gt:.2f}; nu={nu.item():.4f}, nu_gt={nu_gt:.4f}; C_dist={((C - C_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}; F_dist={((F - F_traj[-1])**2).sum(-1).sum(-1).mean(0).item():.2f}"
                     # if args.learn_C:
                     #     log_str += f"\nC_start[:-2] = {C_start[:-2]}, C_start_gt[:-2] = {C_start_gt[:-2]}"
                     # if args.learn_F:

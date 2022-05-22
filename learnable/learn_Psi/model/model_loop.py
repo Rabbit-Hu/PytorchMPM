@@ -63,12 +63,12 @@ class PsiModel2d(nn.Module):
                 nn.Linear(input_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
                 nn.ELU(),
-                # nn.Linear(hidden_dim, hidden_dim),
+                nn.Linear(hidden_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
-                # nn.ELU(),
-                # nn.Linear(hidden_dim, hidden_dim),
+                nn.ELU(),
+                nn.Linear(hidden_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
-                # nn.ELU(),
+                nn.ELU(),
                 # nn.Linear(hidden_dim, hidden_dim),
                 # nn.InstanceNorm1d(hidden_dim),
                 # nn.ELU(),
@@ -228,7 +228,7 @@ class MPMModelLearnedPhi(nn.Module):
         # print("stress.abs.max =", torch.abs(stress).max())
         stress = (-self.dt * self.p_vol * 4 * self.inv_dx **2) * stress # [N, D, D]
 
-        print(f"stress_max={torch.abs(stress).max()}, ", end='')
+        # print(f"stress_max={torch.abs(stress).max()}, ", end='')
 
         affine = stress + self.p_mass * C # [N, D, D]
 
@@ -265,7 +265,7 @@ class MPMModelLearnedPhi(nn.Module):
         grid_v += torch.matmul(grid_affine, grid_x.unsqueeze(3)).squeeze(-1) # [G, G, D]
 
         #~~~~~~~~~~~ Grid update ~~~~~~~~~~~#
-        print(f"grid_v_max before {torch.abs(grid_v).max()}, ", end='')
+        # print(f"grid_v_max before {torch.abs(grid_v).max()}, ", end='')
 
         EPS = 1e-8
         non_empty_mask = grid_m > EPS
@@ -280,7 +280,7 @@ class MPMModelLearnedPhi(nn.Module):
         torch.clamp_(grid_v[:, :3, 1], min=0)
         torch.clamp_(grid_v[:, -3:, 1], max=0)
 
-        print(f"after {torch.abs(grid_v).max()}")
+        # print(f"after {torch.abs(grid_v).max()}")
 
         #~~~~~~~~~~~ Grid to particle (G2P) ~~~~~~~~~~~#
         
