@@ -120,8 +120,8 @@ def main(args):
             else:
                 F_start = F_start_gt
 
-            # criterion = nn.MSELoss()
-            criterion = nn.L1Loss()
+            criterion = nn.MSELoss()
+            # criterion = nn.L1Loss()
 
             mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, base_model=args.base_model).to(device)
             mpm_model.train()
@@ -130,9 +130,10 @@ def main(args):
                 optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
             elif args.optimizer == 'Adam':
                 optimizer = torch.optim.Adam(mpm_model.parameters(), lr=Psi_lr)
-            # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.33, patience=20, min_lr=1e-4)
+            # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.33, patience=500, min_lr=1e-4)
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [500,], gamma=0.1)
             # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100)
+            # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100)
 
             Psi_lr_decayed = Psi_lr
 
@@ -167,7 +168,7 @@ def main(args):
                 x, v, C, F = x_start.clone(), v_start.clone(), C_start.clone(), F_start.clone()
 
                 loss = 0
-                x_scale = 1
+                x_scale = 1e3
                 for clip_frame in range(clip_len):
                     # print(f"     C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     for s in range(n_iter_per_frame):

@@ -59,24 +59,24 @@ class PsiModel2d(nn.Module):
         if input_type == 'basis':
             self.mlp = nn.Linear(input_dim, 1)
         elif input_type in ['eigen', 'coeff']:
-            self.mlp = nn.Sequential(
-                nn.Linear(input_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
-                nn.ELU(),
-                nn.Linear(hidden_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
-                nn.ELU(),
-                # nn.Linear(hidden_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
-                # nn.ELU(),
-                # nn.Linear(hidden_dim, hidden_dim),
-                # nn.InstanceNorm1d(hidden_dim),
-                # nn.ELU(),
-                nn.Linear(hidden_dim, 1),
-            )
             # self.mlp = nn.Sequential(
-            #     nn.Linear(input_dim, 1),
+            #     nn.Linear(input_dim, hidden_dim),
+            #     # nn.InstanceNorm1d(hidden_dim),
+            #     nn.ELU(),
+            #     nn.Linear(hidden_dim, hidden_dim),
+            #     # nn.InstanceNorm1d(hidden_dim),
+            #     nn.ELU(),
+            #     # nn.Linear(hidden_dim, hidden_dim),
+            #     # nn.InstanceNorm1d(hidden_dim),
+            #     # nn.ELU(),
+            #     # nn.Linear(hidden_dim, hidden_dim),
+            #     # nn.InstanceNorm1d(hidden_dim),
+            #     # nn.ELU(),
+            #     nn.Linear(hidden_dim, 1),
             # )
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, 1),
+            )
         elif input_type == 'enu':
             self.mlp = nn.Linear(input_dim, 1)
             E = guess_E
