@@ -44,7 +44,7 @@ def main(args):
     Psi_lr = args.Psi_lr
 
     #* Experiment 1-1: (sanity check) estimate E and nu from the jelly data, known F
-    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000'
+    data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2_every_iter/config_0000'
 
     with open(os.path.join(data_dir, 'config_dict.json'), 'r') as f:
         config_dict = json.load(f)
@@ -84,7 +84,7 @@ def main(args):
 
             #* get a random clip
             # clip_start = np.random.randint(traj_len - clip_len)
-            clip_start = 11 # TODO: change back
+            clip_start = 110 # TODO: change back
             clip_end = clip_start + clip_len
             
             with open(log_path, 'a+') as f:
@@ -174,13 +174,9 @@ def main(args):
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
                         # print(f"s={s:02d} C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
-                    if not args.single_frame:
+                    if (clip_frame + 1) % args.supervise_frame_interval == 0:
                         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
-                if args.single_frame:
-                    loss = criterion(x * x_scale, x_traj[clip_len - 1] * x_scale)
-                else:
-                    loss /= clip_len
-                # loss = criterion(v, v_end)
+                loss /= clip_len // args.supervise_frame_interval
 
                 # if (loss.item() > last_loss or loss.item() < 0.9 * last_loss) and Psi_lr_decayed > 1e-3:
                 #     Psi_lr_decayed *= 0.2
@@ -311,9 +307,9 @@ if __name__ == '__main__':
     parser.add_argument('--Psi_lr', type=float, default=3e-2)
     parser.add_argument('--learn_F', action='store_true')
     parser.add_argument('--learn_C', action='store_true')
-    parser.add_argument('--clip_len', type=int, default=10, help='number of frames in the trajectory clip')
+    parser.add_argument('--clip_len', type=int, default=100, help='number of frames in the trajectory clip')
+    parser.add_argument('--supervise_frame_interval', type=int, default=10)
     parser.add_argument('--n_grad_desc_iter', type=int, default=500, help='number of gradient descent iterations')
-    parser.add_argument('--single_frame', action='store_true', help='supervised by the single (ending) frame of the trajectory if single_frame==True; otherwise supervised by all the frames')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--base_model', type=str, default='fixed_corotated', choices=['neo_hookean', 'fixed_corotated'])
@@ -322,6 +318,7 @@ if __name__ == '__main__':
     parser.add_argument('--compare_grads', action='store_true')
     parser.add_argument('--use_loop', action='store_true')
     parser.add_argument('--clip_grad', type=float, default=float('inf'))
+    parser.add_argument('--grad_eps', type=float, default=float('inf'))
     args = parser.parse_args()
     print(args)
 
