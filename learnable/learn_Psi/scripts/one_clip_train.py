@@ -25,7 +25,7 @@ def main(args):
 
     import taichi as ti # only for GUI (TODO: re-implement GUI to remove dependence on taichi)
     ti.init(arch=ti.cpu)
-    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41)
+    gui = ti.GUI("Taichi MLS-MPM-99", res=512, background_color=0x112F41, show_gui=False)
 
     if args.use_loop:
         from model.model_loop import MPMModelLearnedPhi
@@ -51,7 +51,6 @@ def main(args):
     n_grid = config_dict['n_grid']
     dx = 1 / n_grid
     dt = config_dict['dt']
-    # dt = dt / 2 # TODO: change back
     frame_dt = config_dict['frame_dt']
     n_iter_per_frame = int(frame_dt / dt + 0.5)
     p_vol, p_rho = config_dict['p_vol'], config_dict['p_rho']
@@ -67,11 +66,7 @@ def main(args):
     for traj_name in traj_list:
         
         data_dict = torch.load(os.path.join(data_dir, traj_name, 'data_dict.pth'), map_location="cpu")
-        # print(data_dict)
         traj_len = len(data_dict['x_traj'])
-        # mpm_model_init_params = data_dict['n_dim'], data_dict['n_grid'], 1/data_dict['n_grid'], data_dict['dt'], \
-        #                         data_dict['p_vol'], data_dict['p_rho'], data_dict['gravity']
-        # E_gt, nu_gt = data_dict['E'].to(device), data_dict['nu'].to(device) # on cuda:0; modify if this causes trouble
 
         for clip_idx in range(n_clip_per_traj):
             log_dir = os.path.join('/root/Concept/PytorchMPM/learnable/learn_Psi/log', args.exp_name, f'{traj_name}_clip_{clip_idx:04d}')
@@ -94,8 +89,6 @@ def main(args):
 
             x_start, v_start, C_start_gt, F_start_gt = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
-            # x_end, v_end, C_end, F_end = data_dict['x_traj'][clip_end].to(device), data_dict['v_traj'][clip_end].to(device), \
-            #                             data_dict['C_traj'][clip_end].to(device), data_dict['F_traj'][clip_end].to(device)
             x_traj, v_traj, C_traj, F_traj = data_dict['x_traj'][clip_start + 1: clip_end + 1].to(device), \
                                              data_dict['v_traj'][clip_start + 1: clip_end + 1].to(device), \
                                              data_dict['C_traj'][clip_start + 1: clip_end + 1].to(device), \
@@ -125,7 +118,6 @@ def main(args):
 
             mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, base_model=args.base_model).to(device)
             mpm_model.train()
-            # mpm_model.load_state_dict(torch.load('/root/Concept/PytorchMPM/learnable/learn_Psi/log/traj_0000_clip_0000/model/checkpoint_0019_loss_158.05'))
             if args.optimizer == 'SGD':
                 optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
             elif args.optimizer == 'Adam':
@@ -134,10 +126,6 @@ def main(args):
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [500,], gamma=0.1)
             # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
             # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100)
-
-            Psi_lr_decayed = Psi_lr
-
-            last_loss = 1e18
 
             losses = []
 
@@ -169,26 +157,43 @@ def main(args):
 
                 loss = 0
                 x_scale = 1e3
+                trust_loss = True
                 for clip_frame in range(clip_len):
                     # print(f"     C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
                     for s in range(n_iter_per_frame):
                         x, v, C, F, material, Jp = mpm_model(x, v, C, F, material, Jp)
                         # print(f"s={s:02d} C_max={torch.abs(C).max()}, F_max={torch.abs(F).max()}")
+                    if clip_frame == 0:
+                        continue
+
                     if (clip_frame + 1) % args.supervise_frame_interval == 0:
-                        loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
+                        frame_loss = criterion(x * x_scale, x_traj[clip_frame] * x_scale)
+                        loss += frame_loss
+
+                        if not trust_loss:
+                            continue
+
+                        frame_loss.backward(retain_graph=True)
+
+                        #* calculate grad norm
+                        norm_type = 2
+                        parameters = [p for p in mpm_model.parameters() if p.grad is not None]
+                        grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
+
+                        if grad_norm > args.grad_eps * ((clip_frame + 1) // args.supervise_frame_interval) or clip_frame + 1 == clip_len:
+                            for p in mpm_model.parameters():
+                                if p.grad is not None:
+                                    p.grad /= (clip_frame + 1)
+                            # break
+                            trust_loss = False
+                            print(f"stop trusting at frame {clip_frame + 1}")
+
+   
+                #     if (clip_frame + 1) % args.supervise_frame_interval == 0:
+                #         loss += criterion(x * x_scale, x_traj[clip_frame] * x_scale)
                 loss /= clip_len // args.supervise_frame_interval
 
-                # if (loss.item() > last_loss or loss.item() < 0.9 * last_loss) and Psi_lr_decayed > 1e-3:
-                #     Psi_lr_decayed *= 0.2
-                #     print(f"Psi_lr_decayed = {Psi_lr_decayed}")
-                #     for g in optimizer.param_groups:
-                #         g['lr'] = Psi_lr_decayed
-                # last_loss = loss.item()
-
-                # loss.backward(retain_graph=True)
-                loss.backward()
-                # print("E.data =", E.data, "E.grad.data =", E.grad.data, "E_lr * E.grad.data =", E_lr * E.grad.data)
-                # print("F_start.data =", F_start.data, "F_start.grad.data =", F_start.grad.data, "F_lr * F_start.grad.data =", F_lr * F_start.grad.data)
+                # loss.backward()
 
                 if args.compare_grads:
                     #~ save torch grad 
