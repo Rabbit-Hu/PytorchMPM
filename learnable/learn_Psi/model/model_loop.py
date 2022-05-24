@@ -30,7 +30,7 @@ class PsiModel2d(nn.Module):
     '''
         simple NLP
     '''
-    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
+    def __init__(self, input_type='eigen', correcting=True, hidden_dim=16, n_hidden_layer=0, learn=True, guess_E=1000, guess_nu=0.2, base_model='fixed_corotated'):
         ''' 3d:
                 input_type == 'eigen': Psi = Psi(sigma_1, sigma_2, sigma_3)
                 input_type == 'coeff': Psi = Psi(tr(C), tr(CC), det(C)=J^2), C = F^TF
@@ -74,9 +74,17 @@ class PsiModel2d(nn.Module):
             #     # nn.ELU(),
             #     nn.Linear(hidden_dim, 1),
             # )
-            self.mlp = nn.Sequential(
-                nn.Linear(input_dim, 1),
-            )
+            if n_hidden_layer == 0:
+                self.mlp = nn.Sequential(
+                    nn.Linear(input_dim, 1),
+                )
+            else:
+                mlp_list = [nn.Linear(input_dim, hidden_dim), nn.ELU()]
+                for _ in range(n_hidden_layer - 1):
+                    mlp_list.append(nn.Linear(hidden_dim, hidden_dim))
+                    mlp_list.append(nn.ELU())
+                mlp_list.append(nn.Linear(hidden_dim, 1),)
+                self.mlp = nn.Sequential(*mlp_list)
         elif input_type == 'enu':
             self.mlp = nn.Linear(input_dim, 1)
             E = guess_E
@@ -154,7 +162,9 @@ class PsiModel2d(nn.Module):
 
 class MPMModelLearnedPhi(nn.Module):
     def __init__(self, n_dim, n_grid, dx, dt, \
-                 p_vol, p_rho, gravity, learn_phi=True, psi_model_input_type='eigen', guess_E=1000, guess_nu=0.2,\
+                 p_vol, p_rho, gravity, learn_phi=True, \
+                 psi_model_input_type='eigen', guess_E=1000, guess_nu=0.2,\
+                 n_hidden_layer=0, \
                  base_model='fixed_corotated'):
         super(MPMModelLearnedPhi, self).__init__()
         #~~~~~~~~~~~ Hyper-Parameters ~~~~~~~~~~~#
@@ -164,7 +174,7 @@ class MPMModelLearnedPhi(nn.Module):
         self.p_mass = p_vol * p_rho
         self.base_model = base_model
 
-        self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi, guess_E=1000, guess_nu=0.2)
+        self.psi_model = PsiModel2d(input_type=psi_model_input_type, hidden_dim=16, learn=learn_phi, guess_E=1000, guess_nu=0.2, n_hidden_layer=n_hidden_layer)
 
     def forward(self, x, v, C, F, material, Jp):
         assert(not x.isnan().any())

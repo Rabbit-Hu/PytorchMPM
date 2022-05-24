@@ -116,7 +116,10 @@ def main(args):
             criterion = nn.MSELoss()
             # criterion = nn.L1Loss()
 
-            mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, base_model=args.base_model).to(device)
+            mpm_model = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, \
+                psi_model_input_type=args.psi_model_input_type, base_model=args.base_model, \
+                n_hidden_layer=args.n_hidden_layer).to(device)
+            print(mpm_model)
             mpm_model.train()
             if args.optimizer == 'SGD':
                 optimizer = torch.optim.SGD(mpm_model.parameters(), lr=Psi_lr)
@@ -318,6 +321,7 @@ if __name__ == '__main__':
     parser.add_argument('--supervise_frame_interval', type=int, default=10)
     parser.add_argument('--n_grad_desc_iter', type=int, default=500, help='number of gradient descent iterations')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
+    parser.add_argument('--n_hidden_layer', type=int, default=0)
     parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--base_model', type=str, default='fixed_corotated', choices=['neo_hookean', 'fixed_corotated'])
     parser.add_argument('--optimizer', type=str, default='SGD', choices=['SGD', 'Adam'])

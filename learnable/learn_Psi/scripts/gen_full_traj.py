@@ -82,7 +82,7 @@ def main(args):
     material = torch.ones((len(x_phi),), dtype=torch.int, device=device)
     Jp = torch.ones((len(x_phi),), dtype=torch.float, device=device)
 
-    mpm_model_learned_phi = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type).to(device)
+    mpm_model_learned_phi = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, psi_model_input_type=args.psi_model_input_type, n_hidden_layer=args.n_hidden_layer).to(device)
     mpm_model_learned_phi.load_state_dict(torch.load(args.model_path))
     mpm_model_guess = MPMModelLearnedPhi(2, n_grid, dx, dt, p_vol, p_rho, gravity, learn_phi=False, psi_model_input_type=args.psi_model_input_type).to(device)
 
@@ -119,8 +119,9 @@ if __name__ == '__main__':
     parser.add_argument('--traj_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000/traj_0010')
     parser.add_argument('--start_frame', type=int, default=1)
     parser.add_argument('--end_frame', type=int, default=None)
-    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_2layer_clip_cos/traj_0000_clip_0000/model/checkpoint_0407.pth')
+    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_2layer_clip_sgd_gradeps0.2_lr1/traj_0000_clip_0000/model/checkpoint_0499.pth')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
+    parser.add_argument('--n_hidden_layer', type=int, default=0)
     args = parser.parse_args()
     print(args)
 
