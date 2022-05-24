@@ -17,4 +17,4 @@
     # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_0layer_noclip_sgd_lr3 --use_loop --optimizer SGD --Psi_lr 3
 
     # 5. Use first 50 frames (compute loss at frame 10, 20, 30, 40, 50), but evaluate at frame 100
-    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_0layer_noclip_sgd_sup5eval10_lr3 --use_loop --optimizer SGD --Psi_lr 3 --supervise_clip_len 50
+    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_0layer_noclip_sgd_sup5eval10_lr10 --use_loop --optimizer SGD --Psi_lr 10 --supervise_clip_len 50

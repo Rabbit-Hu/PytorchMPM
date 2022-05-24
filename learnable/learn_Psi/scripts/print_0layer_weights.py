@@ -12,7 +12,7 @@ from model.model_loop import MPMModelLearnedPhi
 
 device = torch.device('cuda:0') 
 
-model_path = '/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_0layer_clip_sgd_gradeps0.2_lr3/traj_0000_clip_0000/model/checkpoint_0499.pth'
+model_path = '/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_0layer_noclip_sgd_lr3/traj_0000_clip_0000/model/checkpoint_0129.pth'
 data_dir = '/xiaodi-fast-vol/PytorchMPM/learnable/learn_Psi/data/jelly_v2_every_iter/config_0000'
 
 with open(os.path.join(data_dir, 'config_dict.json'), 'r') as f:
