@@ -180,7 +180,9 @@ def main(args):
                         parameters = [p for p in mpm_model.parameters() if p.grad is not None]
                         grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
 
-                        if grad_norm > args.grad_eps * ((clip_frame + 1) // args.supervise_frame_interval) or clip_frame + 1 == clip_len:
+                        if grad_norm > args.grad_eps * ((clip_frame + 1) // args.supervise_frame_interval) \
+                                or clip_frame + 1 == clip_len \
+                                or (clip_frame + 1) >= args.supervise_clip_len:
                             for p in mpm_model.parameters():
                                 if p.grad is not None:
                                     p.grad /= (clip_frame + 1)
@@ -324,6 +326,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_loop', action='store_true')
     parser.add_argument('--clip_grad', type=float, default=float('inf'))
     parser.add_argument('--grad_eps', type=float, default=float('inf'))
+    parser.add_argument('--supervise_clip_len', type=int, default=1e9)
     args = parser.parse_args()
     print(args)
 
