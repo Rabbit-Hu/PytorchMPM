@@ -53,7 +53,7 @@ class PsiModel2d(nn.Module):
 
         if input_type == 'eigen': input_dim = 2
         elif input_type == 'coeff': input_dim = 2
-        elif input_type == 'basis': input_dim = 4
+        elif input_type == 'basis': input_dim = 7
         elif input_type == 'enu': input_dim = 2
 
         if input_type == 'basis':
@@ -134,7 +134,7 @@ class PsiModel2d(nn.Module):
             if self.input_type == 'eigen':
                 feat = torch.stack([sigma_1, sigma_2], dim=1) # [B, 2]
             elif self.input_type == 'basis':
-                feat = torch.stack([(sigma_1 - 1)**2 + (sigma_2 - 1)**2, sigma_1 + sigma_2, torch.log(sigma_1) + torch.log(sigma_2), torch.log(sigma_1)**2 + torch.log(sigma_2)**2], dim=1)
+                feat = torch.stack([sigma_1 + sigma_2, sigma_1**2 + sigma_2**2, sigma_1 * sigma_2, (sigma_1 * sigma_2)**2, torch.log(sigma_1) + torch.log(sigma_2), torch.log(sigma_1) * torch.log(sigma_2), torch.log(sigma_1)**2 + torch.log(sigma_2)**2], dim=1)
             elif self.input_type == 'enu':
                 feat = torch.stack([((sigma_1 - 1) ** 2 + (sigma_2 - 1) ** 2), 0.5 * (sigma_1 * sigma_2 - 1) ** 2], dim=1)
 
