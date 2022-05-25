@@ -10,13 +10,13 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
-from functional import avg_voxelize, mpm_p2g, mpm_g2p
+# from functional import avg_voxelize, mpm_p2g, mpm_g2p
 
 # from torch.profiler import profile, record_function, ProfilerActivity
 # from torch_batch_svd import svd as fast_svd
-from pytorch_svd3x3 import svd3x3
+# from pytorch_svd3x3 import svd3x3
 
-from model.model import MPMModelLearnedPhi
+# from model.model import MPMModelLearnedPhi
 from model.model_loop import MPMModelLearnedPhi
 
 import random
@@ -98,8 +98,8 @@ def main(args):
                 x_phi, v_phi, C_phi, F_phi, material, Jp = mpm_model_learned_phi(x_phi, v_phi, C_phi, F_phi, material, Jp)
                 x_enu, v_enu, C_enu, F_enu, material, Jp = mpm_model_guess(x_enu, v_enu, C_enu, F_enu, material, Jp)
 
-            gui_gt.circles(x_traj[frame_i].numpy(), radius=1.5, color=0xEEEEF0)
-            gui_all.circles(x_traj[frame_i].numpy(), radius=1.5, color=0xEEEEF0)
+            gui_gt.circles(x_traj[frame_i + 1].numpy(), radius=1.5, color=0xEEEEF0)
+            gui_all.circles(x_traj[frame_i + 1].numpy(), radius=1.5, color=0xEEEEF0)
             gui_pred.circles(x_phi.detach().cpu().numpy(), radius=1.5, color=0xED553B)
             gui_all.circles(x_phi.detach().cpu().numpy(), radius=1.5, color=0xED553B)
             gui_guess.circles(x_enu.detach().cpu().numpy(), radius=1.5, color=0x068587)
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--traj_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/data/jelly_v2/config_0000/traj_0010')
     parser.add_argument('--start_frame', type=int, default=1)
     parser.add_argument('--end_frame', type=int, default=None)
-    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_2layer_clip_sgd_gradeps0.2_lr1/traj_0000_clip_0000/model/checkpoint_0499.pth')
+    parser.add_argument('--model_path', type=str, default='/root/Concept/PytorchMPM/learnable/learn_Psi/log/loop_2layer_clip_adam_gradeps0.2_lr1e-2/traj_0000_clip_0000/model/checkpoint_0454.pth')
     parser.add_argument('--psi_model_input_type', type=str, default='eigen')
     parser.add_argument('--n_hidden_layer', type=int, default=0)
     args = parser.parse_args()

@@ -1,12 +1,12 @@
 # Generate full trajectory
-    # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/gen_full_traj.py --exp_name loop_2layer_clip_sgd_gradeps0.2_lr1 --n_hidden_layer 2 
+    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/gen_full_traj.py --exp_name loop_2layer_clip_adam_gradeps0.2_lr1e-2 --n_hidden_layer 2 
 
 # (Oracle?) Linear combination of sigma_1, simga_2, sigma_1**2, sigma_2**2, sigma1 * sigma2, (sigma1 * sigma2)**2
     # SGD
     # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_basis_sgd_lr3 --use_loop --optimizer SGD --Psi_lr 3
 
     # Adam
-    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_basis_adam_lr1 --use_loop --optimizer Adam --Psi_lr 1 --psi_model_input_type basis
+    # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_basis_adam_lr1 --use_loop --optimizer Adam --Psi_lr 1 --psi_model_input_type basis
     
 
 # Compare (0 hidden layer)
