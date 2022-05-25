@@ -1,5 +1,5 @@
 # Generate full trajectory
-    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/gen_full_traj.py --exp_name loop_2layer_clip_adam_gradeps0.2_lr1e-2 --n_hidden_layer 2 
+    # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/gen_full_traj.py --exp_name loop_2layer_clip_adam_gradeps0.2_lr1e-2 --n_hidden_layer 2 
 
 # (Oracle?) Linear combination of sigma_1, simga_2, sigma_1**2, sigma_2**2, sigma1 * sigma2, (sigma1 * sigma2)**2
     # SGD
@@ -29,8 +29,11 @@
 
 # Compare (2 hidden layer)
 
+    # 1. Hao's gradient norm trusting strategy
+    # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_2layer_noclip_sgd_gradeps0.2_lr3 --use_loop --optimizer SGD --Psi_lr 3 --grad_eps 2e-1
+
     # 2. Grad clipping
-    CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_2layer_clip_sgd_lr1 --use_loop --optimizer SGD --Psi_lr 1 --clip_grad 1e-1 --n_hidden_layer 2
+    # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_2layer_clip_sgd_lr1 --use_loop --optimizer SGD --Psi_lr 1 --clip_grad 1e-1 --n_hidden_layer 2
 
     # 3. Both 1 and 2
     # CUBLAS_WORKSPACE_CONFIG=:4096:8 DISPLAY=:20 python learnable/learn_Psi/scripts/one_clip_train.py --exp_name loop_2layer_clip_sgd_gradeps0.2_lr1 --use_loop --optimizer SGD --Psi_lr 1 --grad_eps 2e-1 --clip_grad 1e-1 --n_hidden_layer 2
