@@ -152,6 +152,7 @@ class PsiModel2d(nn.Module):
             feat = torch.stack([tr_C, det_C], dim=1) # [B, 2]
         else:
             raise NotImplementedError
+
         out = self.mlp(feat).squeeze(-1)
         if self.correcting and self.input_type != 'enu':
             # print("out:", out.shape, " Psi:", Psi_est.shape)
@@ -185,7 +186,7 @@ class MPMModelLearnedPhi(nn.Module):
 
         #~~~~~~~~~~~ Particle state update ~~~~~~~~~~~#
         base = (x * self.inv_dx - 0.5).int() # [N, D], int, map [n + 0.5, n + 1.5) to n
-        fx = x * self.inv_dx - base.float() # [N, D], float in [0.5, 1.5) (distance: [-0.5, 0.5))
+        fx = x * self.inv_dx - base.type(x.dtype) # [N, D], double in [0.5, 1.5) (distance: [-0.5, 0.5))
         # * Quadratic kernels  [http://mpm.graphics   Eqn. 123, with x=fx, fx-1,fx-2]
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]  # list of [N, D]
         F = F + self.dt * torch.bmm(C, F)
@@ -201,7 +202,7 @@ class MPMModelLearnedPhi(nn.Module):
         # * compute determinant J
         # U, sig, Vh = torch.linalg.svd(F) # [N, D, D], [N, D], [N, D, D]
         # assert(not F.isnan().any())
-        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.float)
+        # F_3x3 = torch.zeros((len(x), 3, 3), device=x.device, dtype=torch.double)
         # F_3x3[:, :2, :2] = F
         # U, sig, Vh = svd3x3(F_3x3)
         # Vh = Vh.transpose(-2, -1)
@@ -222,11 +223,11 @@ class MPMModelLearnedPhi(nn.Module):
         # sig[material == 2] = clamped_sig
         # J = sig.prod(dim=-1) # [N,]
         
-        # F[material == 0] = torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
+        # F[material == 0] = torch.eye(self.n_dim, dtype=torch.double, device=F.device).unsqueeze(0) * torch.pow(J[material == 0], 1./self.n_dim).unsqueeze(1).unsqueeze(2) # liquid
         # F[material == 2] = torch.bmm(U[material == 2], torch.bmm(torch.diag_embed(sig[material == 2]), Vh[material == 2])) # snow
 
         # * stress
-        # stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.float, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
+        # stress = 2 * mu.unsqueeze(1).unsqueeze(2) * torch.bmm((F - torch.bmm(U, Vh)), F.transpose(-1, -2)) + torch.eye(self.n_dim, dtype=torch.double, device=F.device).unsqueeze(0) * (lamda * J * (J - 1)).unsqueeze(1).unsqueeze(2)
         assert(not F.isnan().any())
         with torch.enable_grad():
             F.requires_grad_()
@@ -244,9 +245,9 @@ class MPMModelLearnedPhi(nn.Module):
 
         #~~~~~~~~~~~ Particle to grid (P2G) ~~~~~~~~~~~#
 
-        grid_v = torch.zeros((self.n_grid, self.n_grid, self.n_dim), dtype=torch.float, device=x.device) # grid node momentum / velocity
-        grid_m = torch.zeros((self.n_grid, self.n_grid), dtype=torch.float, device=x.device) # grid node mass
-        grid_affine = torch.zeros((self.n_grid, self.n_grid, self.n_dim, self.n_dim), dtype=torch.float, device=x.device) # weighted sum of affines
+        grid_v = torch.zeros((self.n_grid, self.n_grid, self.n_dim), device=x.device) # grid node momentum / velocity
+        grid_m = torch.zeros((self.n_grid, self.n_grid), device=x.device) # grid node mass
+        grid_affine = torch.zeros((self.n_grid, self.n_grid, self.n_dim, self.n_dim), device=x.device) # weighted sum of affines
 
         for i in range(3):
             for j in range(3):
@@ -273,6 +274,8 @@ class MPMModelLearnedPhi(nn.Module):
                 
         grid_x = torch.stack(torch.meshgrid(torch.arange(self.n_grid, device=x.device), torch.arange(self.n_grid, device=x.device), indexing='ij'), dim=-1) * self.dx # [G, G, D]
         grid_v += torch.matmul(grid_affine, grid_x.unsqueeze(3)).squeeze(-1) # [G, G, D]
+
+        # print(grid_x.dtype, grid_v.dtype)
 
         #~~~~~~~~~~~ Grid update ~~~~~~~~~~~#
         # print(f"grid_v_max before {torch.abs(grid_v).max()}, ", end='')

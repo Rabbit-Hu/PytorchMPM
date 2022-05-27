@@ -89,25 +89,29 @@ def main(args):
 
             x_start, v_start, C_start_gt, F_start_gt = data_dict['x_traj'][clip_start].to(device), data_dict['v_traj'][clip_start].to(device), \
                         data_dict['C_traj'][clip_start].to(device), data_dict['F_traj'][clip_start].to(device)
+            if args.use_double:
+                x_start, v_start, C_start_gt, F_start_gt = x_start.double(), v_start.double(), C_start_gt.double(), F_start_gt.double()
             x_traj, v_traj, C_traj, F_traj = data_dict['x_traj'][clip_start + 1: clip_end + 1].to(device), \
                                              data_dict['v_traj'][clip_start + 1: clip_end + 1].to(device), \
                                              data_dict['C_traj'][clip_start + 1: clip_end + 1].to(device), \
                                              data_dict['F_traj'][clip_start + 1: clip_end + 1].to(device)
+            if args.use_double:
+                x_traj, v_traj, C_traj, F_traj = x_traj.double(), v_traj.double(), C_traj.double(), F_traj.double()
 
             material = torch.ones((len(x_start),), dtype=torch.int, device=device)
-            Jp = torch.ones((len(x_start),), dtype=torch.float, device=device)
+            Jp = torch.ones((len(x_start),), device=device)
             
-            E = torch.rand((1,), dtype=torch.float, device=device) * (E_range[1] - E_range[0]) + E_range[0]
-            nu = torch.rand((1,), dtype=torch.float, device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
+            E = torch.rand((1,), device=device) * (E_range[1] - E_range[0]) + E_range[0]
+            nu = torch.rand((1,), device=device) * (nu_range[1] - nu_range[0]) + nu_range[0]
             print(f"init E = {E}, nu = {nu}")
 
             if args.learn_C:
-                C_start = torch.zeros((len(x_start), 2, 2), dtype=torch.float, device=device)
+                C_start = torch.zeros((len(x_start), 2, 2), device=device)
             else:
                 C_start = C_start_gt
             
             if args.learn_F:
-                F_start = torch.eye(2, dtype=torch.float, device=device)[None, :, :].repeat(len(x_start), 1, 1)
+                F_start = torch.eye(2, device=device)[None, :, :].repeat(len(x_start), 1, 1)
                 F_start += torch.randn_like(F_start) * 0.001
                 # print("F_start =", F_start)
             else:
@@ -328,10 +332,14 @@ if __name__ == '__main__':
     parser.add_argument('--force_convex', action='store_true')
     parser.add_argument('--compare_grads', action='store_true')
     parser.add_argument('--use_loop', action='store_true')
+    parser.add_argument('--use_double', action='store_true')
     parser.add_argument('--clip_grad', type=float, default=float('inf'))
     parser.add_argument('--grad_eps', type=float, default=float('inf'))
     parser.add_argument('--supervise_clip_len', type=int, default=1e9)
     args = parser.parse_args()
     print(args)
+
+    if args.use_double:
+        torch.set_default_dtype(torch.float64)
 
     main(args)
