@@ -14,16 +14,32 @@
 
 using namespace maniskill;
 
+// Reference: NVIDIA CUDA C Programming Guide, Page 97
+// https://developer.download.nvidia.com/compute/DevZone/docs/html/C/doc/CUDA_C_Programming_Guide.pdf
+__device__ double atomicAdd(double* address, double val)
+{
+    unsigned long long int* address_as_ull =
+                             (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(val + __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+
+
 // feature2voxel
 __global__ void
 mpm_point2voxel_kernel(
-    float *__restrict__ xyz, //n x 3
-    float *__restrict__ feature, //n x c 
+    double *__restrict__ xyz, //n x 3
+    double *__restrict__ feature, //n x c 
     ivec3 grid_dim, // dx, dy, dz
 
-    float dx,
-    float inv_dx,
-    float *__restrict__ voxel,
+    double dx,
+    double inv_dx,
+    double *__restrict__ voxel,
     int *__restrict__ batch_index,
     int direction, //0 p2g 1 g2p
     int c,
@@ -41,7 +57,7 @@ mpm_point2voxel_kernel(
 
         vec3 x(xyz[0], xyz[1], xyz[2]);
         ivec3 base = cast_int(x * inv_dx - 0.5);
-        vec3 fx = x * inv_dx - cast_float(base);
+        vec3 fx = x * inv_dx - cast_double(base);
         mat3 w = mat3(0.5f * pow2(1.5f - fx), 0.75f - pow2(fx - 1.f), 0.5f * pow2(fx - 0.5f));
 
 
@@ -49,7 +65,7 @@ mpm_point2voxel_kernel(
             for (int j = 0; j < 3; ++j)
                 for (int k = 0; k < 3; ++k)
                 {
-                    float weight = w(0, i) * w(1, j) * w(2, k);
+                    double weight = w(0, i) * w(1, j) * w(2, k);
                     vec3 dpos = (vec3(i, j, k) - fx) * dx;
                     ivec3 i3 = base + ivec3(i, j, k);
                     //printf("%d %f %f %f %d %d %d %f %d\n", p, xyz[0], xyz[1], xyz[2], i3.x, i3.y, i3.z, feature[0], c);
@@ -78,16 +94,16 @@ inline CUDA_CALLABLE vec3 dw(mat3 const &weights0, mat3 const &weights1, const i
 // feature2voxel
 __global__ void
 mpm_point2voxel_grad_kernel(
-    float *__restrict__ xyz, //n x 3
-    float *__restrict__ feature, //n x c 
+    double *__restrict__ xyz, //n x 3
+    double *__restrict__ feature, //n x c 
     ivec3 grid_dim, // dx, dy, dz
 
-    float dx,
-    float inv_dx,
-    float *__restrict__ voxel,
-    float *__restrict__ voxel_grad,
-    float *__restrict__ x_grad,
-    float *__restrict__ feature_grad,
+    double dx,
+    double inv_dx,
+    double *__restrict__ voxel,
+    double *__restrict__ voxel_grad,
+    double *__restrict__ x_grad,
+    double *__restrict__ feature_grad,
 
     int *__restrict__ batch_index,
     int direction,
@@ -110,7 +126,7 @@ mpm_point2voxel_grad_kernel(
 
         vec3 x(xyz[0], xyz[1], xyz[2]);
         ivec3 base = cast_int(x * inv_dx - 0.5);
-        vec3 fx = x * inv_dx - cast_float(base);
+        vec3 fx = x * inv_dx - cast_double(base);
         mat3 w = mat3(0.5f * pow2(1.5f - fx), 0.75f - pow2(fx - 1.f), 0.5f * pow2(fx - 0.5f));
         mat3 w1 = mat3(-inv_dx * (1.5f - fx), inv_dx * ((-2.f) * fx + 2.0f), -inv_dx * (fx * (-1.f) + 0.5f));
         vec3 grad_x = vec3(0.);
@@ -120,7 +136,7 @@ mpm_point2voxel_grad_kernel(
                 {
                     ivec3 i3 = base + ivec3(i, j, k);
                     int index = grid_index(i3, grid_dim);
-                    float weight = w(0, i) * w(1, j) * w(2, k);
+                    double weight = w(0, i) * w(1, j) * w(2, k);
                     auto grad_N = dw(w, w1, i, j, k); // magic function from chainqueen's code
                     for (int l = 0; l < c; ++l)
                     {
@@ -157,11 +173,11 @@ mpm_point2voxel_grad_kernel(
 
 
 void mpm_point2voxel(
-    float *__restrict__ xyz, //n x 3
-    float *__restrict__ feature, //n x c 
+    double *__restrict__ xyz, //n x 3
+    double *__restrict__ feature, //n x c 
     int gx, int gy, int gz,
-    float dx,
-    float *__restrict__ voxel,
+    double dx,
+    double *__restrict__ voxel,
     int *__restrict__ batch_index,
     int d,
     int c,
@@ -171,14 +187,14 @@ void mpm_point2voxel(
 }
 
 void mpm_point2voxel_grad(
-    float *__restrict__ xyz, //n x 3
-    float *__restrict__ feature, //n x c 
+    double *__restrict__ xyz, //n x 3
+    double *__restrict__ feature, //n x c 
     int gx, int gy, int gz,
-    float dx,
-    float *__restrict__ voxel,
-    float *__restrict__ voxel_grad,
-    float *__restrict__ x_grad,
-    float *__restrict__ feature_grad,
+    double dx,
+    double *__restrict__ voxel,
+    double *__restrict__ voxel_grad,
+    double *__restrict__ x_grad,
+    double *__restrict__ feature_grad,
     int *__restrict__ batch_index,
     int d,
     int c,
@@ -227,14 +243,14 @@ __global__ void grid_stats_kernel(int b, int n, int r, int r2, int r3,
     s   : voxel cube size = voxel resolution ** 3
     ind : voxel index of each point, IntTensor[b, n]
     cnt : #points in each voxel index, IntTensor[b, s]
-    feat: features, FloatTensor[b, c, n]
-    out : outputs, FloatTensor[b, c, s]
+    feat: features, DoubleTensor[b, c, n]
+    out : outputs, DoubleTensor[b, c, s]
 */
 __global__ void avg_voxelize_kernel(int b, int c, int n, int s,
                                     const int *__restrict__ ind,
                                     const int *__restrict__ cnt,
-                                    const float *__restrict__ feat,
-                                    float *__restrict__ out) {
+                                    const double *__restrict__ feat,
+                                    double *__restrict__ out) {
   int batch_index = blockIdx.x;
   int stride = blockDim.x;
   int index = threadIdx.x;
@@ -248,7 +264,7 @@ __global__ void avg_voxelize_kernel(int b, int c, int n, int s,
     //   continue;
     int cur_cnt = cnt[pos];
     if (cur_cnt > 0) {
-      float div_cur_cnt = 1.0 / static_cast<float>(cur_cnt);
+      double div_cur_cnt = 1.0 / static_cast<double>(cur_cnt);
       for (int j = 0; j < c; j++) {
         atomicAdd(out + j * s + pos, feat[j * n + i] * div_cur_cnt);
       }
@@ -265,14 +281,14 @@ __global__ void avg_voxelize_kernel(int b, int c, int n, int s,
     r3     : voxel cube size = voxel resolution ** 3
     ind    : voxel index of each point, IntTensor[b, n]
     cnt    : #points in each voxel index, IntTensor[b, s]
-    grad_y : grad outputs, FloatTensor[b, c, s]
-    grad_x : grad inputs, FloatTensor[b, c, n]
+    grad_y : grad outputs, DoubleTensor[b, c, s]
+    grad_x : grad inputs, DoubleTensor[b, c, n]
 */
 __global__ void avg_voxelize_grad_kernel(int b, int c, int n, int r3,
                                          const int *__restrict__ ind,
                                          const int *__restrict__ cnt,
-                                         const float *__restrict__ grad_y,
-                                         float *__restrict__ grad_x) {
+                                         const double *__restrict__ grad_y,
+                                         double *__restrict__ grad_x) {
   int batch_index = blockIdx.x;
   int stride = blockDim.x;
   int index = threadIdx.x;
@@ -286,7 +302,7 @@ __global__ void avg_voxelize_grad_kernel(int b, int c, int n, int r3,
     //   continue;
     int cur_cnt = cnt[pos];
     if (cur_cnt > 0) {
-      float div_cur_cnt = 1.0 / static_cast<float>(cur_cnt);
+      double div_cur_cnt = 1.0 / static_cast<double>(cur_cnt);
       for (int j = 0; j < c; j++) {
         atomicAdd(grad_x + j * n + i, grad_y[j * r3 + pos] * div_cur_cnt);
       }
@@ -295,7 +311,7 @@ __global__ void avg_voxelize_grad_kernel(int b, int c, int n, int r3,
 }
 
 void avg_voxelize(int b, int c, int n, int r, int r2, int r3, const int *coords,
-                  const float *feat, int *ind, int *cnt, float *out) {
+                  const double *feat, int *ind, int *cnt, double *out) {
   grid_stats_kernel<<<b, optimal_num_threads(n)>>>(b, n, r, r2, r3, coords, ind,
                                                    cnt);
   avg_voxelize_kernel<<<b, optimal_num_threads(n)>>>(b, c, n, r3, ind, cnt,
@@ -304,7 +320,7 @@ void avg_voxelize(int b, int c, int n, int r, int r2, int r3, const int *coords,
 }
 
 void avg_voxelize_grad(int b, int c, int n, int s, const int *ind,
-                       const int *cnt, const float *grad_y, float *grad_x) {
+                       const int *cnt, const double *grad_y, double *grad_x) {
   avg_voxelize_grad_kernel<<<b, optimal_num_threads(n)>>>(b, c, n, s, ind, cnt,
                                                           grad_y, grad_x);
   CUDA_CHECK_ERRORS();

@@ -16,5 +16,9 @@
 #define CHECK_IS_FLOAT(x)                                                      \
   TORCH_CHECK(x.scalar_type() == at::ScalarType::Float,                           \
            #x " must be a float tensor")
+  
+#define CHECK_IS_DOUBLE(x)                                                      \
+  TORCH_CHECK(x.scalar_type() == at::ScalarType::Double,                           \
+           #x " must be a double tensor")
 
 #endif

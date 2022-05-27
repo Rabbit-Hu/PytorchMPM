@@ -17,7 +17,7 @@ at::Tensor mpm_p2g_forward(
   const at::Tensor features,
   const at::Tensor batch_index,
   const int gx, const int gy, const int gz,
-  const int batch_size, float dx);
+  const int batch_size, double dx);
 
 std::vector<at::Tensor>  mpm_p2g_backward(
   const at::Tensor coords,
@@ -25,14 +25,14 @@ std::vector<at::Tensor>  mpm_p2g_backward(
   const at::Tensor batch_index,
   const at::Tensor voxel_grad,
   const int gx, const int gy, const int gz,
-  const int batch_size, float dx);
+  const int batch_size, double dx);
 
 at::Tensor mpm_g2p_forward(
   const at::Tensor coords,
   const at::Tensor voxels,
   const at::Tensor batch_index,
   const int gx, const int gy, const int gz,
-  const int batch_size, float dx);
+  const int batch_size, double dx);
 
 std::vector<at::Tensor>  mpm_g2p_backward(
   const at::Tensor coords,
@@ -40,5 +40,5 @@ std::vector<at::Tensor>  mpm_g2p_backward(
   const at::Tensor batch_index,
   const at::Tensor feature_grad,
   const int gx, const int gy, const int gz,
-  const int batch_size, float dx);
+  const int batch_size, double dx);
 #endif
