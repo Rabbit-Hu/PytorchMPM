@@ -7,9 +7,9 @@
 #include <curand_kernel.h>
 
 #include "cuda_utils.cuh"
-#include "../../../mpm/csrc/vec3.h"
-#include "../../../mpm/csrc/mat3.h"
-#include "../../../mpm/csrc/common.h"
+#include "vec3.h"
+#include "mat3.h"
+#include "common.h"
 
 
 using namespace maniskill;
